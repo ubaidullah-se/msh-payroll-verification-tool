@@ -164,6 +164,7 @@ function renderRoleGrid() {
         ${ROLES.map((r) => `<option value="${r.v}"${r.v === role ? " selected" : ""}>${r.l}</option>`).join("")}
       </select>`;
     grid.appendChild(row);
+    row.querySelector(`#r${i}`).addEventListener("change", updateRunReady);
   });
 
   document.getElementById("rolePanel").style.display =
@@ -1164,16 +1165,9 @@ function exportCSV() {
 const actions = {
   goToMapping,
   resetAll,
-  goToMapping,
   showScreen,
   runAudit,
-  showScreen,
-  showScreen,
   exportCSV,
-  switchTab,
-  switchTab,
-  switchTab,
-  switchTab,
   switchTab,
 };
 
