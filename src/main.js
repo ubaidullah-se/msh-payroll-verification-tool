@@ -662,18 +662,20 @@ async function goToMapping() {
     const rowsEl = document.getElementById("mapRows");
     rowsEl.innerHTML = "";
     mappingStore.clear();
+    const rowBuckets = { noMatch: [], partialMatch: [], exactMatch: [] };
     let idx = 0;
     tsEmps.forEach((displayName, tsKey) => {
-      const rowId = idx++;
-      const autoPayKey =
-        payKeys.find((pk) => norm(pk) === tsKey) ||
-        payKeys.find((pk) => norm(pk).includes(tsKey.split(" ")[0])) ||
-        "";
+      const exactMatch = payKeys.find((pk) => norm(pk) === tsKey);
+      const partialMatch = exactMatch
+        ? null
+        : payKeys.find((pk) => norm(pk).includes(tsKey.split(" ")[0]));
+      const autoPayKey = exactMatch || partialMatch || "";
       const autoDept = autoPayKey
         ? payrollEmps[autoPayKey].dept
         : allDepts[0] || "";
       mappingStore.set(tsKey, { payrollKey: autoPayKey, dept: autoDept });
 
+      const rowId = idx++;
       const payOpts =
         `<option value="">— Not in payroll —</option>` +
         payKeys
@@ -704,14 +706,26 @@ async function goToMapping() {
         const ds = document.getElementById(`mdept_${rowId}`);
         if (dept) ds.value = dept;
         mappingStore.set(tsKey, { payrollKey: pk, dept: ds.value });
+        refreshMappingOptions(payKeys);
       });
-      row.querySelector(`#mdept_${rowId}`).addEventListener("change", (e) => {
-        const cur = mappingStore.get(tsKey) || {};
-        mappingStore.set(tsKey, { ...cur, dept: e.target.value });
-      });
-      rowsEl.appendChild(row);
+
+      const bucket = exactMatch
+        ? "exactMatch"
+        : partialMatch
+          ? "partialMatch"
+          : "noMatch";
+      row.classList.add(bucket);
+      rowBuckets[bucket].push(row);
     });
 
+    // Order rows: no matches first, partial matches next, exact matches last
+    [
+      ...rowBuckets.noMatch,
+      ...rowBuckets.partialMatch,
+      ...rowBuckets.exactMatch,
+    ].forEach((r) => rowsEl.appendChild(r));
+
+    refreshMappingOptions(payKeys);
     showScreen("scr-mapping");
     setSideStep(2);
   } catch (err) {
@@ -731,6 +745,34 @@ function collectMappings() {
     const payrollKey = document.getElementById(`mpay_${rowId}`).value;
     const dept = document.getElementById(`mdept_${rowId}`).value;
     mappingStore.set(tsKey, { payrollKey, dept });
+  });
+}
+
+function refreshMappingOptions(payKeys) {
+  const selectedPayrollKeys = new Set(
+    Array.from(mappingStore.values())
+      .map((m) => m.payrollKey)
+      .filter(Boolean),
+  );
+
+  document.querySelectorAll(".map-row").forEach((row) => {
+    const rowId = row.dataset.rowid;
+    const select = document.getElementById(`mpay_${rowId}`);
+    if (!select) return;
+    const currentValue = select.value;
+
+    const optionHtml = [
+      `<option value="">— Not in payroll —</option>`,
+      ...payKeys
+        .filter((pk) => pk === currentValue || !selectedPayrollKeys.has(pk))
+        .map(
+          (pk) =>
+            `<option value="${pk}"${pk === currentValue ? " selected" : ""}>${capName(pk)}</option>`,
+        ),
+    ];
+
+    select.innerHTML = optionHtml.join("");
+    select.value = currentValue || "";
   });
 }
 
