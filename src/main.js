@@ -8,6 +8,7 @@ let parsedData = {},
   audit = {},
   logs = [];
 const mappingStore = new Map(); // tsNormKey → {payrollKey, dept}
+const FILE_DATES = new Map(); // filename → {start, end} parsed from xlsx header
 
 // ═══════════════════════════════════════════════════════════════
 // CONSTANTS
@@ -138,11 +139,133 @@ fi.addEventListener("change", () => handleFiles([...fi.files]));
 function handleFiles(newFiles) {
   // Merge with existing FILES (avoid duplicates by name)
   const existingNames = new Set(FILES.map((f) => f.name));
+  const added = [];
   newFiles.forEach((f) => {
-    if (!existingNames.has(f.name)) FILES.push(f);
+    if (!existingNames.has(f.name)) {
+      FILES.push(f);
+      added.push(f);
+    }
   });
   renderRoleGrid();
   updateRunReady();
+  // Kick off async date extraction for newly added xlsx/xls files
+  added.forEach((f) => {
+    const ext = f.name.split(".").pop().toLowerCase();
+    if (ext === "xlsx" || ext === "xls") extractFileDates(f);
+  });
+}
+
+// ── Extract "Week starting / Week ending" dates from xlsx header rows ────────
+// Row 6 (index 5 in 0-based XLSX): col 17 = "Week starting:", col 22 = date
+// Row 7 (index 6):                  col 17 = "Week ending:",   col 22 = date
+// openpyxl confirmed these as datetime objects at column index 22 (0-based).
+async function extractFileDates(file) {
+  try {
+    const buf = await readBuf(file);
+    const wb = XLSX.read(buf, { type: "array", cellDates: true });
+    const ws = wb.Sheets[wb.SheetNames[0]];
+    const raw = XLSX.utils.sheet_to_json(ws, {
+      header: 1,
+      defval: null,
+      raw: false,
+      dateNF: "yyyy-mm-dd",
+    });
+
+    let start = null,
+      end = null;
+
+    // Scan first 15 rows for "Week starting" / "Week ending" labels + date values
+    for (let r = 0; r < Math.min(15, raw.length); r++) {
+      const row = raw[r] || [];
+      for (let c = 0; c < row.length; c++) {
+        const v = String(row[c] || "").trim();
+        if (
+          v.includes("Week starting") ||
+          v.toLowerCase().includes("week starting")
+        ) {
+          // Date is in the next non-null cell to the right
+          for (let dc = 1; dc <= 6; dc++) {
+            const dv = String(row[c + dc] || "").trim();
+            if (dv && dv !== "null" && dv.length >= 6) {
+              start = fmtDateStr(dv);
+              break;
+            }
+          }
+        }
+        if (
+          v.includes("Week ending") ||
+          v.toLowerCase().includes("week ending")
+        ) {
+          for (let dc = 1; dc <= 6; dc++) {
+            const dv = String(row[c + dc] || "").trim();
+            if (dv && dv !== "null" && dv.length >= 6) {
+              end = fmtDateStr(dv);
+              break;
+            }
+          }
+        }
+      }
+      if (start && end) break;
+    }
+
+    if (start || end) {
+      FILE_DATES.set(file.name, { start, end });
+      // Update the date badge in the DOM (if row still rendered)
+      const badge = document.getElementById(`fdate-${CSS.escape(file.name)}`);
+      if (badge) {
+        badge.className = "fr-date";
+        badge.textContent =
+          start && end
+            ? `📅 ${start} → ${end}`
+            : start
+              ? `📅 From ${start}`
+              : `📅 To ${end}`;
+      }
+    } else {
+      const badge = document.getElementById(`fdate-${CSS.escape(file.name)}`);
+      if (badge) badge.remove();
+    }
+  } catch (e) {
+    // Silently ignore — not all files will have dates
+    const badge = document.getElementById(`fdate-${CSS.escape(file.name)}`);
+    if (badge) badge.remove();
+  }
+}
+
+function fmtDateStr(raw) {
+  // Handles "2026-01-02", "1/2/2026", "Jan 2, 2026", Excel serial (number string)
+  const s = String(raw).trim();
+  // Already ISO-ish yyyy-mm-dd
+  if (/^\d{4}-\d{2}-\d{2}/.test(s)) {
+    const d = new Date(s + "T00:00:00");
+    return isNaN(d)
+      ? s.substring(0, 10)
+      : d.toLocaleDateString("en-US", {
+          month: "short",
+          day: "numeric",
+          year: "numeric",
+        });
+  }
+  // Excel numeric serial
+  if (/^\d{5}$/.test(s)) {
+    const d = new Date(Math.round((parseInt(s) - 25569) * 86400 * 1000));
+    return isNaN(d)
+      ? s
+      : d.toLocaleDateString("en-US", {
+          month: "short",
+          day: "numeric",
+          year: "numeric",
+        });
+  }
+  // Try native parse
+  const d = new Date(s);
+  if (!isNaN(d))
+    return d.toLocaleDateString("en-US", {
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+    });
+  return s.substring(0, 10);
 }
 
 function renderRoleGrid() {
@@ -152,6 +275,14 @@ function renderRoleGrid() {
     const role = detectRole(f.name);
     const ext = f.name.split(".").pop().toUpperCase();
     const icon = ext === "CSV" ? "📄" : "📊";
+    const dates = FILE_DATES.get(f.name);
+    const dateHtml =
+      ext !== "CSV"
+        ? dates
+          ? `<span class="fr-date" id="fdate-${f.name.replace(/[^a-zA-Z0-9]/g, "_")}">📅 ${dates.start} → ${dates.end}</span>`
+          : `<span class="fr-date-loading" id="fdate-${f.name.replace(/[^a-zA-Z0-9]/g, "_")}">⏳ reading dates…</span>`
+        : "";
+
     const row = document.createElement("div");
     row.className = "file-role-row";
     row.innerHTML = `
@@ -159,6 +290,7 @@ function renderRoleGrid() {
       <div class="fr-info">
         <div class="fr-name" title="${f.name}">${f.name}</div>
         <div class="fr-size">${fmtSize(f.size)} · ${ext}</div>
+        ${dateHtml}
       </div>
       <select class="fr-select" id="r${i}">
         ${ROLES.map((r) => `<option value="${r.v}"${r.v === role ? " selected" : ""}>${r.l}</option>`).join("")}
@@ -219,6 +351,7 @@ function resetAll() {
   audit = {};
   logs = [];
   mappingStore.clear();
+  FILE_DATES.clear();
   fi.value = "";
   document.getElementById("roleGrid").innerHTML = "";
   document.getElementById("rolePanel").style.display = "none";
@@ -933,9 +1066,29 @@ function renderResults() {
   const p = parsedData,
     a = audit;
 
+  // Build period dates — prefer FILE_DATES (directly from xlsx) over text-parsed fallback
+  const rm = getRoleMap();
+  const collectDates = (files) => {
+    let earliest = null,
+      latest = null;
+    (files || []).forEach((f) => {
+      const d = FILE_DATES.get(f.name);
+      if (!d) return;
+      if (!earliest || d.start < earliest) earliest = d.start;
+      if (!latest || d.end > latest) latest = d.end;
+    });
+    return { start: earliest, end: latest };
+  };
+  const w1dates = collectDates(rm["week1"]);
+  const w2dates = collectDates(rm["week2"]);
+  const w1start = w1dates.start || p.w1.start || "?";
+  const w1end = w1dates.end || p.w1.end || "?";
+  const w2start = w2dates.start || p.w2.start || "?";
+  const w2end = w2dates.end || p.w2.end || "?";
+
   document.getElementById("pbar").innerHTML = `
-    <div>📅 W1: <span>${p.w1.start || "?"}</span> → <span>${p.w1.end || "?"}</span></div>
-    <div>📅 W2: <span>${p.w2.start || "?"}</span> → <span>${p.w2.end || "?"}</span></div>
+    <div>📅 W1: <span>${w1start}</span> → <span>${w1end}</span></div>
+    <div>📅 W2: <span>${w2start}</span> → <span>${w2end}</span></div>
     <div>🏢 <span>${p.w1.company || p.w2.company || "The Buttes"}</span></div>
     <div>👥 Employees: <span>${a.employees.length}</span></div>
     <div>⏱ Total hrs: <span>${a.employees.reduce((s, e) => s + e.total, 0).toFixed(2)}</span></div>

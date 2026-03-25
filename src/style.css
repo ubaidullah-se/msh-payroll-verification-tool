@@ -456,6 +456,29 @@ body {
   background: var(--surface2);
   color: var(--text);
 }
+.fr-date {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 4px;
+  padding: 2px 8px;
+  background: var(--accent-dim);
+  border: 1px solid rgba(79, 110, 247, 0.25);
+  border-radius: 6px;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--accent);
+  font-family: var(--mono);
+  letter-spacing: 0.2px;
+}
+.fr-date-loading {
+  color: var(--muted);
+  background: transparent;
+  border-color: transparent;
+  font-size: 10px;
+  margin-top: 4px;
+  display: inline-block;
+}
 
 .role-panel-footer {
   padding: 14px 20px;
