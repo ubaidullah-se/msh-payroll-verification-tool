@@ -8,7 +8,10 @@ let parsedData = {},
   audit = {},
   logs = [];
 const mappingStore = new Map(); // tsNormKey → {payrollKey, dept}
-const FILE_DATES = new Map(); // filename → {start, end} parsed from xlsx header
+const FILE_DATES = new Map(); // filename → {start, end}  displayed date range
+const FILE_START_MS = new Map(); // filename → ms timestamp of "Week starting" date
+// TIMESHEET_REGISTRY: Set of filenames confirmed as timesheets (persists across uploads)
+const TIMESHEET_REGISTRY = new Set();
 
 // ═══════════════════════════════════════════════════════════════
 // CONSTANTS
@@ -77,9 +80,10 @@ const fmtSize = (b) =>
     ? (b / 1048576).toFixed(1) + " MB"
     : (b / 1024).toFixed(0) + " KB";
 
-function detectRole(name) {
+// ── Pass 1: instant filename heuristic ────────────────────────────────────
+function detectRoleByName(name) {
   const n = name.toLowerCase();
-  if (n.includes("epi0") || n.endsWith(".csv") || n.includes("adp"))
+  if (n.includes("epi0") || n.includes("adp") || n.endsWith(".csv"))
     return "adp";
   if (n.includes("buttes_pay") || n.includes("payroll")) return "payroll";
   if (n.includes("yellowstone")) return "invoice_ys";
@@ -94,9 +98,233 @@ function detectRole(name) {
     n.includes("_hk") ||
     n.includes("hospitality_week")
   )
-    return "week1";
-  if (n.includes("proyec") || n.includes("hospital")) return "week2";
-  return "ignore";
+    return "week1_hint";
+  if (n.includes("proyec") || n.includes("hospital")) return "week2_hint";
+  return "unknown";
+}
+
+// ── Pass 2: async content sniffing ────────────────────────────────────────
+// Returns: "adp" | "payroll" | "invoice_msh" | "invoice_ys" | "timesheet" | null
+async function detectRoleByContent(file) {
+  try {
+    const buf = await readBuf(file);
+    const wb = XLSX.read(buf, {
+      type: "array",
+      cellDates: true,
+      sheetRows: 25,
+    });
+    const ws = wb.Sheets[wb.SheetNames[0]];
+    const raw = XLSX.utils.sheet_to_json(ws, {
+      header: 1,
+      defval: "",
+      raw: false,
+      dateNF: "yyyy-mm-dd",
+    });
+    const txt = raw
+      .flat()
+      .map((v) => String(v || "").toLowerCase())
+      .join(" ");
+
+    if (txt.includes("co code") && txt.includes("reg hours")) return "adp";
+    if (
+      txt.includes("associate name:") &&
+      (txt.includes("first week") || txt.includes("second week"))
+    )
+      return "payroll";
+    if (
+      txt.includes("invoice #") &&
+      (txt.includes("housekeeper") ||
+        txt.includes("cook") ||
+        txt.includes("dishwasher") ||
+        txt.includes("maintenance"))
+    )
+      return "invoice_msh";
+    if (
+      txt.includes("invoice") &&
+      (txt.includes("loss prevention") ||
+        txt.includes("yellowstone") ||
+        txt.includes("business solutions"))
+    )
+      return "invoice_ys";
+    if (txt.includes("associate name:") && txt.includes("total hrs to pay"))
+      return "timesheet";
+    return null;
+  } catch (e) {
+    return null;
+  }
+}
+
+// ── Extract "Week starting" and "Week ending" dates from a timesheet ────────
+// Stores ms timestamp in FILE_START_MS for week comparison.
+// Stores FILE_DATES for display badges.
+async function extractTimesheetDates(file) {
+  try {
+    const buf = await readBuf(file);
+    // Read with cellDates:true so XLSX parses date serials into JS Date objects
+    const wb = XLSX.read(buf, { type: "array", cellDates: true });
+    const ws = wb.Sheets[wb.SheetNames[0]];
+    // raw:true gives us the actual JS Date objects for date cells
+    const raw = XLSX.utils.sheet_to_json(ws, {
+      header: 1,
+      defval: null,
+      raw: true,
+    });
+
+    let startMs = null,
+      startStr = null,
+      endStr = null;
+
+    for (let r = 0; r < Math.min(15, raw.length); r++) {
+      const row = raw[r] || [];
+      for (let c = 0; c < row.length; c++) {
+        const v = String(row[c] || "")
+          .trim()
+          .toLowerCase();
+
+        if (v.includes("week starting")) {
+          // Scan right — up to 8 cols — for the first non-null, non-label value
+          for (let dc = 1; dc <= 8; dc++) {
+            const cell = row[c + dc];
+            if (cell == null) continue;
+            const d = parseDateCell(cell);
+            if (d) {
+              startMs = d.getTime();
+              startStr = d.toLocaleDateString("en-US", {
+                month: "short",
+                day: "numeric",
+                year: "numeric",
+              });
+              break;
+            }
+          }
+        }
+
+        if (v.includes("week ending")) {
+          for (let dc = 1; dc <= 8; dc++) {
+            const cell = row[c + dc];
+            if (cell == null) continue;
+            const d = parseDateCell(cell);
+            if (d) {
+              endStr = d.toLocaleDateString("en-US", {
+                month: "short",
+                day: "numeric",
+                year: "numeric",
+              });
+              // If start was not found, derive startMs as endMs - 6 days (same week)
+              if (startMs === null)
+                startMs = d.getTime() - 6 * 24 * 60 * 60 * 1000;
+              break;
+            }
+          }
+        }
+      }
+      if (startMs !== null && endStr) break;
+    }
+
+    const safeId = file.name.replace(/[^a-zA-Z0-9]/g, "_");
+    if (startMs !== null) FILE_START_MS.set(file.name, startMs);
+    if (startStr || endStr) {
+      FILE_DATES.set(file.name, { start: startStr, end: endStr });
+    }
+    // Badge is updated by reassignWeeks() — no need to touch it here
+  } catch (e) {
+    // silent — date badge stays as-is
+  }
+}
+
+// Parse a cell value into a JS Date, handling all formats XLSX might return:
+//   - JS Date object (cellDates:true)
+//   - "2026-01-09" or "2026-01-09 00:00:00" (formatted string)
+//   - Excel numeric serial (e.g. 46031)
+function parseDateCell(cell) {
+  if (cell instanceof Date && !isNaN(cell)) return cell;
+  const s = String(cell).trim();
+  // "2026-01-09" or "2026-01-09 00:00:00"
+  const isoMatch = s.match(/^(\d{4}-\d{2}-\d{2})/);
+  if (isoMatch) {
+    const d = new Date(isoMatch[1] + "T00:00:00");
+    if (!isNaN(d)) return d;
+  }
+  // Excel serial number (5-digit integer)
+  if (/^\d{5}$/.test(s)) {
+    const d = new Date(Math.round((parseInt(s, 10) - 25569) * 86400000));
+    if (!isNaN(d)) return d;
+  }
+  // Generic parse as last resort
+  const d = new Date(s);
+  if (!isNaN(d) && d.getFullYear() > 2000) return d;
+  return null;
+}
+
+function reassignWeeks() {
+  if (TIMESHEET_REGISTRY.size === 0) return;
+
+  const entries = Array.from(TIMESHEET_REGISTRY).map((fname) => ({
+    fname,
+    idx: FILES.findIndex((f) => f.name === fname),
+    ms: FILE_START_MS.get(fname) ?? null,
+  }));
+
+  // Sort ascending by start date; files with no date go last
+  entries.sort((a, b) => {
+    if (a.ms === null && b.ms === null) return 0;
+    if (a.ms === null) return 1;
+    if (b.ms === null) return -1;
+    return a.ms - b.ms;
+  });
+
+  const earliestMs = entries[0].ms;
+  const WEEK_GAP_MS = 5 * 24 * 60 * 60 * 1000; // 5 days
+
+  entries.forEach(({ fname, idx, ms }) => {
+    const isWeek2 =
+      earliestMs !== null && ms !== null && ms - earliestMs >= WEEK_GAP_MS;
+    const role = isWeek2 ? "week2" : "week1";
+    const safeId = fname.replace(/[^a-zA-Z0-9]/g, "_");
+
+    // Update dropdown
+    const sel = document.getElementById(`r${idx}`);
+    if (sel) {
+      sel.value = role;
+      sel.disabled = false;
+      sel.style.opacity = "";
+    }
+
+    // Update type badge
+    const typeBadge = document.getElementById(`ftype-${safeId}`);
+    if (typeBadge) {
+      typeBadge.className = "fr-detected";
+      typeBadge.textContent = `✦ ${role === "week2" ? "Week 2" : "Week 1"} Timesheet`;
+    }
+
+    // Update date badge from FILE_DATES (populated by extractTimesheetDates)
+    const dates = FILE_DATES.get(fname);
+    const dateBadge = document.getElementById(`fdate-${safeId}`);
+    if (dateBadge) {
+      // Derive startStr from ms if FILE_DATES didn't capture a start string
+      const startStr =
+        dates?.start ||
+        (ms !== null
+          ? new Date(ms).toLocaleDateString("en-US", {
+              month: "short",
+              day: "numeric",
+              year: "numeric",
+            })
+          : null);
+      const endStr = dates?.end || null;
+      if (startStr || endStr) {
+        dateBadge.className = "fr-date";
+        dateBadge.textContent =
+          startStr && endStr
+            ? `📅 ${startStr} → ${endStr}`
+            : startStr
+              ? `📅 From ${startStr}`
+              : `📅 To ${endStr}`;
+      }
+    }
+  });
+
+  updateRunReady();
 }
 
 function readBuf(file) {
@@ -137,105 +365,155 @@ dz.addEventListener("drop", (e) => {
 fi.addEventListener("change", () => handleFiles([...fi.files]));
 
 function handleFiles(newFiles) {
-  // Merge with existing FILES (avoid duplicates by name)
+  // Dedup by name
   const existingNames = new Set(FILES.map((f) => f.name));
-  const added = [];
-  newFiles.forEach((f) => {
-    if (!existingNames.has(f.name)) {
-      FILES.push(f);
-      added.push(f);
-    }
-  });
-  renderRoleGrid();
+  const added = newFiles.filter((f) => !existingNames.has(f.name));
+  if (!added.length) return;
+  added.forEach((f) => FILES.push(f));
+
+  // Append only NEW rows — never wipe or re-render existing rows
+  appendToGrid(added);
   updateRunReady();
-  // Kick off async date extraction for newly added xlsx/xls files
+
+  // For each new file: run content detection, and ONLY IF it is a timesheet,
+  // chain date extraction afterwards so FILE_START_MS is guaranteed populated
+  // before reassignWeeks reads it.
   added.forEach((f) => {
-    const ext = f.name.split(".").pop().toLowerCase();
-    if (ext === "xlsx" || ext === "xls") extractFileDates(f);
+    const nameRole = detectRoleByName(f.name);
+    const isXlsx = /\.(xlsx|xls)$/i.test(f.name);
+    const safeId = f.name.replace(/[^a-zA-Z0-9]/g, "_");
+
+    // Confident non-timesheet name match — no async work needed
+    if (
+      nameRole !== "unknown" &&
+      nameRole !== "week1_hint" &&
+      nameRole !== "week2_hint"
+    )
+      return;
+
+    // Disable dropdown while detecting
+    const sel = document.getElementById(`r${FILES.indexOf(f)}`);
+    if (sel) {
+      sel.disabled = true;
+      sel.style.opacity = "0.6";
+    }
+
+    // Step 1: detect type by content
+    (isXlsx ? detectRoleByContent(f) : Promise.resolve(null)).then(
+      (contentRole) => {
+        const isTimesheet =
+          contentRole === "timesheet" ||
+          (contentRole === null &&
+            (nameRole === "week1_hint" || nameRole === "week2_hint"));
+
+        if (isTimesheet) {
+          // Step 2 (only for timesheets): extract dates, THEN register + reassign
+          return (isXlsx ? extractTimesheetDates(f) : Promise.resolve()).then(
+            () => {
+              // FILE_START_MS is now populated for this file
+              TIMESHEET_REGISTRY.add(f.name);
+
+              // Re-evaluate ALL known timesheets — updates dropdowns + badges
+              reassignWeeks();
+
+              const sel2 = document.getElementById(`r${FILES.indexOf(f)}`);
+              if (sel2) {
+                sel2.disabled = false;
+                sel2.style.opacity = "";
+              }
+              updateRunReady();
+            },
+          );
+        }
+
+        // Not a timesheet
+        const sel2 = document.getElementById(`r${FILES.indexOf(f)}`);
+        const typeBadge = document.getElementById(`ftype-${safeId}`);
+        if (sel2) {
+          sel2.disabled = false;
+          sel2.style.opacity = "";
+        }
+
+        if (contentRole) {
+          if (sel2) sel2.value = contentRole;
+          if (typeBadge) {
+            typeBadge.className = "fr-detected";
+            typeBadge.textContent = "✦ content detected";
+          }
+        } else {
+          if (typeBadge) {
+            typeBadge.className = "fr-date-loading";
+            typeBadge.textContent = "⚠ unrecognised — assign manually";
+          }
+        }
+        updateRunReady();
+      },
+    );
   });
 }
 
-// ── Extract "Week starting / Week ending" dates from xlsx header rows ────────
-// Row 6 (index 5 in 0-based XLSX): col 17 = "Week starting:", col 22 = date
-// Row 7 (index 6):                  col 17 = "Week ending:",   col 22 = date
-// openpyxl confirmed these as datetime objects at column index 22 (0-based).
-async function extractFileDates(file) {
-  try {
-    const buf = await readBuf(file);
-    const wb = XLSX.read(buf, { type: "array", cellDates: true });
-    const ws = wb.Sheets[wb.SheetNames[0]];
-    const raw = XLSX.utils.sheet_to_json(ws, {
-      header: 1,
-      defval: null,
-      raw: false,
-      dateNF: "yyyy-mm-dd",
-    });
+// Append only new file rows — never touch existing rows
+function appendToGrid(files) {
+  const grid = document.getElementById("roleGrid");
+  files.forEach((f) => {
+    const i = FILES.indexOf(f);
+    const nameRole = detectRoleByName(f.name);
+    const isHintOrUnknown =
+      nameRole === "week1_hint" ||
+      nameRole === "week2_hint" ||
+      nameRole === "unknown";
+    const initRole = isHintOrUnknown ? "ignore" : nameRole;
 
-    let start = null,
-      end = null;
+    const ext = f.name.split(".").pop().toUpperCase();
+    const icon = ext === "CSV" ? "📄" : "📊";
+    const safeId = f.name.replace(/[^a-zA-Z0-9]/g, "_");
 
-    // Scan first 15 rows for "Week starting" / "Week ending" labels + date values
-    for (let r = 0; r < Math.min(15, raw.length); r++) {
-      const row = raw[r] || [];
-      for (let c = 0; c < row.length; c++) {
-        const v = String(row[c] || "").trim();
-        if (
-          v.includes("Week starting") ||
-          v.toLowerCase().includes("week starting")
-        ) {
-          // Date is in the next non-null cell to the right
-          for (let dc = 1; dc <= 6; dc++) {
-            const dv = String(row[c + dc] || "").trim();
-            if (dv && dv !== "null" && dv.length >= 6) {
-              start = fmtDateStr(dv);
-              break;
-            }
-          }
-        }
-        if (
-          v.includes("Week ending") ||
-          v.toLowerCase().includes("week ending")
-        ) {
-          for (let dc = 1; dc <= 6; dc++) {
-            const dv = String(row[c + dc] || "").trim();
-            if (dv && dv !== "null" && dv.length >= 6) {
-              end = fmtDateStr(dv);
-              break;
-            }
-          }
-        }
-      }
-      if (start && end) break;
-    }
+    // Type badge
+    const typeBadgeHtml = isHintOrUnknown
+      ? `<span class="fr-date-loading" id="ftype-${safeId}">🔍 detecting type…</span>`
+      : `<span class="fr-detected"     id="ftype-${safeId}">✦ name matched</span>`;
 
-    if (start || end) {
-      FILE_DATES.set(file.name, { start, end });
-      // Update the date badge in the DOM (if row still rendered)
-      const badge = document.getElementById(`fdate-${CSS.escape(file.name)}`);
-      if (badge) {
-        badge.className = "fr-date";
-        badge.textContent =
-          start && end
-            ? `📅 ${start} → ${end}`
-            : start
-              ? `📅 From ${start}`
-              : `📅 To ${end}`;
-      }
-    } else {
-      const badge = document.getElementById(`fdate-${CSS.escape(file.name)}`);
-      if (badge) badge.remove();
-    }
-  } catch (e) {
-    // Silently ignore — not all files will have dates
-    const badge = document.getElementById(`fdate-${CSS.escape(file.name)}`);
-    if (badge) badge.remove();
-  }
+    // Date badge — only for hint/unknown xlsx files (potential timesheets)
+    // Confident non-timesheet files (invoice, payroll, adp) never have dates
+    const isXlsx = ext !== "CSV";
+    const dateBadgeHtml =
+      isXlsx && isHintOrUnknown
+        ? `<span class="fr-date-loading" id="fdate-${safeId}">⏳ reading dates…</span>`
+        : isXlsx
+          ? `<span id="fdate-${safeId}"></span>`
+          : "";
+
+    const row = document.createElement("div");
+    row.className = "file-role-row";
+    row.innerHTML = `
+            <div class="fr-icon">${icon}</div>
+            <div class="fr-info">
+              <div class="fr-name" title="${f.name}">${f.name}</div>
+              <div class="fr-size">${fmtSize(f.size)} · ${ext}</div>
+              ${typeBadgeHtml}
+              ${dateBadgeHtml}
+            </div>
+            <select class="fr-select" id="r${i}"${isHintOrUnknown ? ' disabled style="opacity:0.6"' : ""}>
+              ${ROLES.map((r) => `<option value="${r.v}"${r.v === initRole ? " selected" : ""}>${r.l}</option>`).join("")}
+            </select>`;
+    grid.appendChild(row);
+    row.querySelector(`#r${i}`).addEventListener("change", updateRunReady);
+  });
+
+  document.getElementById("rolePanel").style.display =
+    FILES.length > 0 ? "block" : "none";
+  document.getElementById("runRow").style.display =
+    FILES.length > 0 ? "flex" : "none";
+}
+
+// Full rebuild (used only on resetAll)
+function renderRoleGrid() {
+  document.getElementById("roleGrid").innerHTML = "";
+  appendToGrid(FILES);
 }
 
 function fmtDateStr(raw) {
-  // Handles "2026-01-02", "1/2/2026", "Jan 2, 2026", Excel serial (number string)
   const s = String(raw).trim();
-  // Already ISO-ish yyyy-mm-dd
   if (/^\d{4}-\d{2}-\d{2}/.test(s)) {
     const d = new Date(s + "T00:00:00");
     return isNaN(d)
@@ -246,7 +524,6 @@ function fmtDateStr(raw) {
           year: "numeric",
         });
   }
-  // Excel numeric serial
   if (/^\d{5}$/.test(s)) {
     const d = new Date(Math.round((parseInt(s) - 25569) * 86400 * 1000));
     return isNaN(d)
@@ -257,52 +534,14 @@ function fmtDateStr(raw) {
           year: "numeric",
         });
   }
-  // Try native parse
   const d = new Date(s);
-  if (!isNaN(d))
-    return d.toLocaleDateString("en-US", {
-      month: "short",
-      day: "numeric",
-      year: "numeric",
-    });
-  return s.substring(0, 10);
-}
-
-function renderRoleGrid() {
-  const grid = document.getElementById("roleGrid");
-  grid.innerHTML = "";
-  FILES.forEach((f, i) => {
-    const role = detectRole(f.name);
-    const ext = f.name.split(".").pop().toUpperCase();
-    const icon = ext === "CSV" ? "📄" : "📊";
-    const dates = FILE_DATES.get(f.name);
-    const dateHtml =
-      ext !== "CSV"
-        ? dates
-          ? `<span class="fr-date" id="fdate-${f.name.replace(/[^a-zA-Z0-9]/g, "_")}">📅 ${dates.start} → ${dates.end}</span>`
-          : `<span class="fr-date-loading" id="fdate-${f.name.replace(/[^a-zA-Z0-9]/g, "_")}">⏳ reading dates…</span>`
-        : "";
-
-    const row = document.createElement("div");
-    row.className = "file-role-row";
-    row.innerHTML = `
-      <div class="fr-icon">${icon}</div>
-      <div class="fr-info">
-        <div class="fr-name" title="${f.name}">${f.name}</div>
-        <div class="fr-size">${fmtSize(f.size)} · ${ext}</div>
-        ${dateHtml}
-      </div>
-      <select class="fr-select" id="r${i}">
-        ${ROLES.map((r) => `<option value="${r.v}"${r.v === role ? " selected" : ""}>${r.l}</option>`).join("")}
-      </select>`;
-    grid.appendChild(row);
-    row.querySelector(`#r${i}`).addEventListener("change", updateRunReady);
-  });
-
-  document.getElementById("rolePanel").style.display =
-    FILES.length > 0 ? "block" : "none";
-  document.getElementById("runRow").style.display =
-    FILES.length > 0 ? "flex" : "none";
+  return isNaN(d)
+    ? s.substring(0, 10)
+    : d.toLocaleDateString("en-US", {
+        month: "short",
+        day: "numeric",
+        year: "numeric",
+      });
 }
 
 function getRoleMap() {
@@ -352,6 +591,8 @@ function resetAll() {
   logs = [];
   mappingStore.clear();
   FILE_DATES.clear();
+  FILE_START_MS.clear();
+  TIMESHEET_REGISTRY.clear();
   fi.value = "";
   document.getElementById("roleGrid").innerHTML = "";
   document.getElementById("rolePanel").style.display = "none";
