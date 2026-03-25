@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>MSH Hospitality — Payroll Verification Tool</title>
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <header>
+      <div class="logo">✦</div>
+      <div>
+        <h1>Payroll Verification Tool <span class="hbadge">v2</span></h1>
+        <p>
+          MSH Hospitality · Biweekly Audit Engine · Dept-level Invoice +
+          Yellowstone LLC flagging
+        </p>
+      </div>
+    </header>
+
+    <div class="container">
+      <div class="upload-zone" id="dropZone">
+        <input type="file" id="fileInput" multiple accept=".xlsx,.xls,.csv" />
+        <div class="upload-icon">📂</div>
+        <h2>Drop your payroll files here, or click to browse</h2>
+        <p>
+          Timesheets (Week 1 &amp; 2) · MSH Invoices · Yellowstone Invoices ·
+          Payroll Summary · ADP Export CSV
+        </p>
+      </div>
+
+      <div class="role-section" id="roleSection">
+        <h3>🗂 Assign File Roles</h3>
+        <p>
+          Roles are auto-detected from file names. Adjust if needed, then
+          proceed to mapping.
+        </p>
+        <div class="role-grid" id="roleGrid"></div>
+        <div class="btns">
+          <button class="btn btn-primary" id="mapBtn" onclick="showMapping()">
+            ➡ Proceed to Employee Mapping
+          </button>
+          <button class="btn btn-sec" onclick="resetAll()">↺ Reset</button>
+        </div>
+      </div>
+
+      <div class="role-section" id="mappingSection" style="display: none">
+        <h3>👥 Map Employee Names & Select Departments</h3>
+        <p>
+          Map timesheet employee names to payroll names (for variations), and
+          select departments. Defaults are pre-selected from extracted data.
+        </p>
+        <div id="mappingTable"></div>
+        <div class="btns">
+          <button class="btn btn-primary" id="auditBtn" onclick="runAudit()">
+            ▶ Run Payroll Audit
+          </button>
+          <button class="btn btn-sec" onclick="backToRoles()">
+            ⬅ Back to Roles
+          </button>
+        </div>
+      </div>
+
+      <div id="results">
+        <div class="topbtns">
+          <button class="btn btn-sec" onclick="resetAll()">
+            ↺ Upload New Files
+          </button>
+          <button class="btn btn-sec" onclick="exportCSV()">
+            ⬇ Export Report CSV
+          </button>
+        </div>
+
+        <div class="pbar" id="pbar"></div>
+        <div class="cards" id="cards"></div>
+
+        <div id="alertBanners"></div>
+
+        <div class="tabs" id="tabs">
+          <div class="tab active" onclick="switchTab(0)">
+            👤 Employees <span class="tbadge" id="tb0">0</span>
+          </div>
+          <div class="tab" onclick="switchTab(1)">
+            🏢 Dept vs Invoice <span class="tbadge" id="tb1">—</span>
+          </div>
+          <div class="tab" onclick="switchTab(2)">
+            📋 TS vs Payroll <span class="tbadge" id="tb2">—</span>
+          </div>
+          <div class="tab" onclick="switchTab(3)">
+            🏦 Payroll vs ADP <span class="tbadge" id="tb3">—</span>
+          </div>
+          <div class="tab" onclick="switchTab(4)">📝 Parse Log</div>
+        </div>
+
+        <div id="tc0" class="tcontent active">
+          <div class="sec-hdr">
+            <div>
+              <div class="sec-title">Combined Biweekly Hours per Employee</div>
+              <div class="sec-sub">
+                Week 1 + Week 2 timesheet totals · Dept assigned from payroll
+                register · 🔵 = Yellowstone Activity LLC
+              </div>
+            </div>
+          </div>
+          <div class="twrap"><table id="empTable"></table></div>
+        </div>
+        <div id="tc1" class="tcontent">
+          <div class="sec-hdr">
+            <div>
+              <div class="sec-title">
+                Department / Duty Hours: Timesheets vs MSH Client Invoices
+              </div>
+              <div class="sec-sub">
+                Compares biweekly dept totals from timesheets against billed
+                hours on invoices · Yellowstone employees excluded from this
+                comparison
+              </div>
+            </div>
+          </div>
+          <div id="tc1-inner"></div>
+        </div>
+        <div id="tc2" class="tcontent">
+          <div class="sec-hdr">
+            <div>
+              <div class="sec-title">
+                Timesheet vs Internal Payroll Summary — 100% Match Required
+              </div>
+              <div class="sec-sub">
+                Per-employee biweekly hours must match exactly (Reg + OT)
+              </div>
+            </div>
+          </div>
+          <div class="twrap"><table id="payTable"></table></div>
+        </div>
+        <div id="tc3" class="tcontent">
+          <div class="sec-hdr">
+            <div>
+              <div class="sec-title">
+                Payroll Summary vs ADP Export — 100% Match Required
+              </div>
+              <div class="sec-sub">
+                Matched by ADP File # · Reg Hours and OT Hours must match
+                exactly
+              </div>
+            </div>
+          </div>
+          <div class="twrap"><table id="adpTable"></table></div>
+        </div>
+        <div id="tc4" class="tcontent">
+          <div class="sec-hdr">
+            <div><div class="sec-title">Parse &amp; Validation Log</div></div>
+          </div>
+          <div class="twrap"><ul class="loglist" id="logList"></ul></div>
+        </div>
+      </div>
+    </div>
+
+    <script type="module" src="./main.js"></script>
+  </body>
+</html>
