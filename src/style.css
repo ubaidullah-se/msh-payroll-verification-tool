@@ -480,6 +480,22 @@ body {
   display: inline-block;
 }
 
+.fr-detected {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 4px;
+  padding: 2px 8px;
+  background: var(--green-dim);
+  border: 1px solid rgba(34, 197, 94, 0.25);
+  border-radius: 6px;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--green);
+  font-family: var(--mono);
+  letter-spacing: 0.2px;
+}
+
 .role-panel-footer {
   padding: 14px 20px;
   border-top: 1px solid var(--border);

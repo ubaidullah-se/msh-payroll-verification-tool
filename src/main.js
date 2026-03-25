@@ -1552,7 +1552,7 @@ function exportCSV() {
   const csv = rows.map((r) => r.map((v) => `"${v}"`).join(",")).join("\n");
   const a = document.createElement("a");
   a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
-  a.download = "payroll_audit_v5.csv";
+  a.download = "payroll_audit.csv";
   a.click();
 }
 
