@@ -173,6 +173,49 @@
         min-width: 200px;
       }
 
+      /* Mapping section */
+      #mappingTable {
+        margin-bottom: 20px;
+        max-height: 400px;
+        overflow-y: auto;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        background: var(--surface2);
+      }
+      .mapping-row {
+        display: grid;
+        grid-template-columns: 2fr 2fr 2fr 1fr;
+        gap: 10px;
+        padding: 10px;
+        border-bottom: 1px solid var(--border);
+        align-items: center;
+      }
+      .mapping-row:last-child {
+        border-bottom: none;
+      }
+      .mapping-row select {
+        background: var(--bg);
+        color: var(--text);
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        padding: 5px 10px;
+        font-size: 12px;
+        cursor: pointer;
+      }
+      .mapping-header {
+        font-weight: 600;
+        font-size: 12px;
+        color: var(--muted);
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        background: var(--surface);
+        padding: 10px;
+        border-bottom: 1px solid var(--border);
+        display: grid;
+        grid-template-columns: 2fr 2fr 2fr 1fr;
+        gap: 10px;
+      }
+
       .btn {
         display: inline-flex;
         align-items: center;
@@ -350,7 +393,7 @@
         z-index: 1;
       }
       td {
-        padding: 9px 13px;
+        padding: 20px 13px;
         border-bottom: 1px solid var(--border);
         vertical-align: middle;
       }
@@ -558,15 +601,28 @@
       <div class="role-section" id="roleSection">
         <h3>🗂 Assign File Roles</h3>
         <p>
-          Roles are auto-detected from file names. Adjust if needed, then run
-          the audit.
+          Roles are auto-detected from file names. Adjust if needed, then proceed to mapping.
         </p>
         <div class="role-grid" id="roleGrid"></div>
         <div class="btns">
-          <button class="btn btn-primary" id="runBtn" onclick="runAudit()">
-            ▶ Run Payroll Audit
+          <button class="btn btn-primary" id="mapBtn" onclick="showMapping()">
+            ➡ Proceed to Employee Mapping
           </button>
           <button class="btn btn-sec" onclick="resetAll()">↺ Reset</button>
+        </div>
+      </div>
+
+      <div class="role-section" id="mappingSection" style="display: none;">
+        <h3>👥 Map Employee Names & Select Departments</h3>
+        <p>
+          Map timesheet employee names to payroll names (for variations), and select departments. Defaults are pre-selected from extracted data.
+        </p>
+        <div id="mappingTable"></div>
+        <div class="btns">
+          <button class="btn btn-primary" id="auditBtn" onclick="runAudit()">
+            ▶ Run Payroll Audit
+          </button>
+          <button class="btn btn-sec" onclick="backToRoles()">⬅ Back to Roles</button>
         </div>
       </div>
 
@@ -671,7 +727,9 @@
       let FILES = [],
         parsedData = {},
         audit = {},
-        logs = [];
+        logs = [],
+        employeeMappings = {},
+        deptMappings = {};
 
       const ROLES = [
         { v: "week1", l: "Week 1 Timesheet" },
@@ -733,6 +791,8 @@
         n === null || n === undefined ? "—" : Number(n).toFixed(2);
       const diffCls = (d) =>
         d === null ? "" : Math.abs(d) < 0.05 ? "dz" : d > 0 ? "dp" : "dn";
+      const capitalizeName = (s) =>
+        String(s || "").split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ');
 
       function detectRole(name) {
         const n = name.toLowerCase();
@@ -814,10 +874,88 @@
         parsedData = {};
         audit = {};
         logs = [];
+        employeeMappings = {};
+        deptMappings = {};
         fi.value = "";
         document.getElementById("roleSection").style.display = "none";
+        document.getElementById("mappingSection").style.display = "none";
         document.getElementById("results").style.display = "none";
         document.getElementById("roleGrid").innerHTML = "";
+        document.getElementById("mappingTable").innerHTML = "";
+      }
+
+      async function showMapping() {
+        document.getElementById("roleSection").style.display = "none";
+        document.getElementById("mappingSection").style.display = "block";
+
+        // Collect role map
+        const rm = {};
+        FILES.forEach((f, i) => {
+          const role = document.getElementById(`r${i}`).value;
+          if (role !== "ignore") {
+            if (!rm[role]) rm[role] = [];
+            rm[role].push(f);
+          }
+        });
+
+        // Parse timesheets to get employees
+        const timesheetEmps = new Set();
+        const parseTS = async (files) => {
+          for (const f of files || []) {
+            const r = parseTimesheet(await toRaw(f), f.name);
+            Object.keys(r.employees).forEach(k => timesheetEmps.add(k));
+          }
+        };
+        await parseTS(rm["week1"]);
+        await parseTS(rm["week2"]);
+
+        // Parse payroll
+        let payrollEmps = {};
+        let payrollDepts = new Set();
+        for (const f of rm["payroll"] || []) {
+          const pd = parsePayroll(await toRaw(f), f.name);
+          payrollEmps = { ...payrollEmps, ...pd.employees };
+          Object.values(pd.employees).forEach(e => payrollDepts.add(e.dept));
+        }
+
+        // Also, extract depts from timesheets if available (though probably not)
+        // For now, use payroll depts
+
+        // Build the table
+        const table = document.getElementById("mappingTable");
+        table.innerHTML = `<div class="mapping-header">
+          <div>Timesheet Name</div>
+          <div>Mapped Payroll Name</div>
+          <div>Department</div>
+          <div></div>
+        </div>`;
+
+        Array.from(timesheetEmps).sort().forEach(tsName => {
+          const row = document.createElement("div");
+          row.className = "mapping-row";
+          // Payroll options
+          const payrollOptions = `<option value="">-- Select --</option>` + Object.keys(payrollEmps).map(p => `<option value="${p}">${capitalizeName(p)}</option>`).join("");
+          // Dept options
+          const deptOptions = Array.from(payrollDepts).map(d => `<option value="${d}">${d}</option>`).join("");
+          row.innerHTML = `
+            <div>${capitalizeName(tsName)}</div>
+            <select id="map-${tsName.replace(/[^a-zA-Z0-9]/g, '_')}">${payrollOptions}</select>
+            <select id="dept-${tsName.replace(/[^a-zA-Z0-9]/g, '_')}">${deptOptions}</select>
+            <div></div>
+          `;
+          table.appendChild(row);
+          // Auto-select if exact match
+          const exact = Object.keys(payrollEmps).find(p => norm(p) === norm(tsName));
+          if (exact) {
+            document.getElementById(`map-${tsName.replace(/[^a-zA-Z0-9]/g, '_')}`).value = exact;
+            document.getElementById(`dept-${tsName.replace(/[^a-zA-Z0-9]/g, '_')}`).value = payrollEmps[exact].dept;
+          }
+        });
+      }
+
+      function backToRoles() {
+        document.getElementById("mappingSection").style.display = "none";
+        document.getElementById("roleSection").style.display = "block";
       }
 
       // ═══════════════════════════════════════════════════════════════
@@ -1236,9 +1374,23 @@
         logs = [];
         parsedData = {};
         audit = {};
-        const btn = document.getElementById("runBtn");
+        employeeMappings = {};
+        deptMappings = {};
+        const btn = document.getElementById("auditBtn");
         btn.disabled = true;
         btn.textContent = "⏳ Processing…";
+
+        // Collect mappings
+        document.querySelectorAll('[id^="map-"]').forEach(sel => {
+          const tsName = sel.id.replace('map-', '').replace(/_/g, ' '); // reverse replace
+          const mapped = sel.value;
+          if (mapped) employeeMappings[tsName] = mapped;
+        });
+        document.querySelectorAll('[id^="dept-"]').forEach(sel => {
+          const tsName = sel.id.replace('dept-', '').replace(/_/g, ' ');
+          const dept = sel.value;
+          if (dept) deptMappings[tsName] = dept;
+        });
 
         try {
           // ── Collect role map ──
@@ -1303,20 +1455,29 @@
           allKeys.forEach((k) => {
             const e1 = w1.emps[k] || { name: k, hours: 0 };
             const e2 = w2.emps[k] || { name: k, hours: 0 };
-            const name = e1.name || e2.name;
-            const dept = (nameToDept[k] || "UNKNOWN").toUpperCase();
+            const mappedName = employeeMappings[k] || (e1.name || e2.name);
+            const name = capitalizeName(mappedName);
+            const dept = (deptMappings[k] || nameToDept[employeeMappings[k]] || nameToDept[k] || "UNKNOWN").toUpperCase();
             const deptNorm = norm(dept);
             const isYS =
               YELLOWSTONE_DEPTS.has(deptNorm) ||
               ["proyec", "fnu rishabh", "rishabh"].some((ys) => k.includes(ys));
-            biweekly[k] = {
-              name,
-              dept,
-              isYS,
-              w1: e1.hours,
-              w2: e2.hours,
-              total: e1.hours + e2.hours,
-            };
+            const mappedKey = norm(mappedName);
+            if (biweekly[mappedKey]) {
+              // If already exists, sum hours
+              biweekly[mappedKey].w1 += e1.hours;
+              biweekly[mappedKey].w2 += e2.hours;
+              biweekly[mappedKey].total += e1.hours + e2.hours;
+            } else {
+              biweekly[mappedKey] = {
+                name,
+                dept,
+                isYS,
+                w1: e1.hours,
+                w2: e2.hours,
+                total: e1.hours + e2.hours,
+              };
+            }
           });
           parsedData.biweekly = biweekly;
 
@@ -1502,6 +1663,8 @@
           });
 
           renderResults();
+          document.getElementById("mappingSection").style.display = "none";
+          document.getElementById("results").style.display = "block";
         } catch (err) {
           log("ERR", "Fatal: " + err.message);
           console.error(err);
