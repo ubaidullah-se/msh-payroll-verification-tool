@@ -10,15 +10,25 @@
     <header>
       <div class="logo">✦</div>
       <div>
-        <h1>Payroll Verification Tool <span class="hbadge">v2</span></h1>
+        <h1>Payroll Verification Tool <span class="hbadge">v3</span></h1>
         <p>
           MSH Hospitality · Biweekly Audit Engine · Dept-level Invoice +
-          Yellowstone LLC flagging
+          Employee Mapping + Yellowstone LLC flagging
         </p>
       </div>
     </header>
 
     <div class="container">
+      <!-- Step indicator -->
+      <div class="steps" id="stepBar">
+        <div class="step active" id="stp1">① Upload &amp; Assign Roles</div>
+        <div class="step-sep">›</div>
+        <div class="step" id="stp2">② Map Employees &amp; Departments</div>
+        <div class="step-sep">›</div>
+        <div class="step" id="stp3">③ Audit Results</div>
+      </div>
+
+      <!-- Step 1: Upload -->
       <div class="upload-zone" id="dropZone">
         <input type="file" id="fileInput" multiple accept=".xlsx,.xls,.csv" />
         <div class="upload-icon">📂</div>
@@ -29,42 +39,57 @@
         </p>
       </div>
 
-      <div class="role-section" id="roleSection">
-        <h3>🗂 Assign File Roles</h3>
+      <div class="panel" id="rolePanel">
+        <h3>🗂 Step 1 — Assign File Roles</h3>
         <p>
-          Roles are auto-detected from file names. Adjust if needed, then
-          proceed to mapping.
+          Roles are auto-detected from file names. Adjust any that are
+          incorrect, then proceed to employee mapping.
         </p>
         <div class="role-grid" id="roleGrid"></div>
         <div class="btns">
-          <button class="btn btn-primary" id="mapBtn" onclick="showMapping()">
+          <button
+            class="btn btn-primary"
+            id="toMappingBtn"
+            onclick="showMapping()"
+          >
             ➡ Proceed to Employee Mapping
           </button>
           <button class="btn btn-sec" onclick="resetAll()">↺ Reset</button>
         </div>
       </div>
 
-      <div class="role-section" id="mappingSection" style="display: none">
-        <h3>👥 Map Employee Names & Select Departments</h3>
+      <!-- Step 2: Employee & Dept Mapping -->
+      <div class="panel" id="mappingPanel">
+        <h3>👥 Step 2 — Map Employee Names &amp; Departments</h3>
         <p>
-          Map timesheet employee names to payroll names (for variations), and
-          select departments. Defaults are pre-selected from extracted data.
+          Each timesheet employee is listed below. Select the matching payroll
+          name (to handle spelling variations) and confirm the department.
+          Auto-matched where names are identical.
         </p>
-        <div id="mappingTable"></div>
+        <div class="map-table" id="mapTable">
+          <div class="map-hdr">
+            <div>Timesheet Name</div>
+            <div>Matched Payroll Name</div>
+            <div>Department</div>
+          </div>
+          <div id="mapRows"></div>
+        </div>
         <div class="btns">
+          <button class="btn btn-sec" onclick="backToRoles()">⬅ Back</button>
           <button class="btn btn-primary" id="auditBtn" onclick="runAudit()">
             ▶ Run Payroll Audit
-          </button>
-          <button class="btn btn-sec" onclick="backToRoles()">
-            ⬅ Back to Roles
           </button>
         </div>
       </div>
 
+      <!-- Step 3: Results -->
       <div id="results">
         <div class="topbtns">
           <button class="btn btn-sec" onclick="resetAll()">
             ↺ Upload New Files
+          </button>
+          <button class="btn btn-sec" onclick="backToMapping()">
+            ⬅ Edit Mapping
           </button>
           <button class="btn btn-sec" onclick="exportCSV()">
             ⬇ Export Report CSV
@@ -73,10 +98,9 @@
 
         <div class="pbar" id="pbar"></div>
         <div class="cards" id="cards"></div>
-
         <div id="alertBanners"></div>
 
-        <div class="tabs" id="tabs">
+        <div class="tabs">
           <div class="tab active" onclick="switchTab(0)">
             👤 Employees <span class="tbadge" id="tb0">0</span>
           </div>
@@ -97,13 +121,13 @@
             <div>
               <div class="sec-title">Combined Biweekly Hours per Employee</div>
               <div class="sec-sub">
-                Week 1 + Week 2 timesheet totals · Dept assigned from payroll
-                register · 🔵 = Yellowstone Activity LLC
+                Week 1 + Week 2 timesheet totals · 🔵 = Yellowstone Activity LLC
               </div>
             </div>
           </div>
           <div class="twrap"><table id="empTable"></table></div>
         </div>
+
         <div id="tc1" class="tcontent">
           <div class="sec-hdr">
             <div>
@@ -111,14 +135,14 @@
                 Department / Duty Hours: Timesheets vs MSH Client Invoices
               </div>
               <div class="sec-sub">
-                Compares biweekly dept totals from timesheets against billed
-                hours on invoices · Yellowstone employees excluded from this
-                comparison
+                Biweekly dept totals vs billed invoice hours · Yellowstone
+                employees excluded
               </div>
             </div>
           </div>
           <div id="tc1-inner"></div>
         </div>
+
         <div id="tc2" class="tcontent">
           <div class="sec-hdr">
             <div>
@@ -132,6 +156,7 @@
           </div>
           <div class="twrap"><table id="payTable"></table></div>
         </div>
+
         <div id="tc3" class="tcontent">
           <div class="sec-hdr">
             <div>
@@ -146,6 +171,7 @@
           </div>
           <div class="twrap"><table id="adpTable"></table></div>
         </div>
+
         <div id="tc4" class="tcontent">
           <div class="sec-hdr">
             <div><div class="sec-title">Parse &amp; Validation Log</div></div>

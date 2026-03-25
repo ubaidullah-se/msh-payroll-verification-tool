@@ -109,8 +109,8 @@ header p {
   margin-bottom: 12px;
 }
 
-/* Role section */
-.role-section {
+/* Panels (role + mapping share this shell) */
+.panel {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--r);
@@ -118,15 +118,17 @@ header p {
   margin-bottom: 24px;
   display: none;
 }
-.role-section h3 {
+.panel h3 {
   margin-bottom: 6px;
   font-size: 15px;
 }
-.role-section > p {
+.panel > p {
   font-size: 12px;
   color: var(--muted);
   margin-bottom: 16px;
 }
+
+/* Role grid */
 .role-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -165,27 +167,46 @@ header p {
   min-width: 200px;
 }
 
-/* Mapping section */
-#mappingTable {
-  margin-bottom: 20px;
-  max-height: 400px;
+/* Mapping table */
+.map-table {
+  margin-bottom: 4px;
+  max-height: 420px;
   overflow-y: auto;
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--surface2);
 }
-.mapping-row {
+.map-hdr,
+.map-row {
   display: grid;
-  grid-template-columns: 2fr 2fr 2fr 1fr;
+  grid-template-columns: 2fr 2fr 2fr;
   gap: 10px;
-  padding: 10px;
-  border-bottom: 1px solid var(--border);
+  padding: 10px 14px;
   align-items: center;
 }
-.mapping-row:last-child {
+.map-hdr {
+  font-weight: 600;
+  font-size: 11px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  border-radius: 8px 8px 0 0;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+.map-row {
+  border-bottom: 1px solid var(--border);
+}
+.map-row:last-child {
   border-bottom: none;
 }
-.mapping-row select {
+.map-row:hover {
+  background: rgba(255, 255, 255, 0.02);
+}
+.map-row select {
   background: var(--bg);
   color: var(--text);
   border: 1px solid var(--border);
@@ -193,21 +214,19 @@ header p {
   padding: 5px 10px;
   font-size: 12px;
   cursor: pointer;
+  width: 100%;
 }
-.mapping-header {
-  font-weight: 600;
-  font-size: 12px;
+.map-name {
+  font-size: 13px;
+  font-weight: 500;
+}
+.map-hint {
+  font-size: 11px;
   color: var(--muted);
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  background: var(--surface);
-  padding: 10px;
-  border-bottom: 1px solid var(--border);
-  display: grid;
-  grid-template-columns: 2fr 2fr 2fr 1fr;
-  gap: 10px;
+  margin-top: 2px;
 }
 
+/* Buttons */
 .btn {
   display: inline-flex;
   align-items: center;
@@ -245,6 +264,37 @@ header p {
   gap: 10px;
   flex-wrap: wrap;
   margin-top: 18px;
+}
+
+/* Step indicator */
+.steps {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  margin-bottom: 20px;
+  font-size: 12px;
+}
+.step {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  border-radius: 20px;
+  color: var(--muted);
+  font-weight: 500;
+}
+.step.active {
+  background: rgba(79, 110, 247, 0.15);
+  color: var(--accent);
+  font-weight: 600;
+}
+.step.done {
+  color: var(--green);
+}
+.step-sep {
+  color: var(--border);
+  font-size: 16px;
+  margin: 0 2px;
 }
 
 /* Summary cards */
@@ -361,7 +411,7 @@ header p {
   display: block;
 }
 
-/* Table */
+/* Data table */
 .twrap {
   overflow-x: auto;
   border-radius: var(--r);
@@ -396,7 +446,7 @@ tr:hover td {
   background: rgba(255, 255, 255, 0.02);
 }
 .tr-mismatch td {
-  background: rgba(239, 68, 68, 0.04) !important;
+  background: rgba(239, 68, 68, 0.05) !important;
 }
 .tr-warn td {
   background: rgba(245, 158, 11, 0.04) !important;
@@ -405,6 +455,7 @@ tr:hover td {
   background: rgba(56, 189, 248, 0.04) !important;
 }
 
+/* Badges */
 .badge {
   display: inline-flex;
   align-items: center;
@@ -474,7 +525,7 @@ tr:hover td {
   margin-top: 2px;
 }
 
-/* Alert banner */
+/* Alert banners */
 .alert {
   border-radius: 8px;
   padding: 12px 16px;
@@ -503,17 +554,6 @@ tr:hover td {
   background: rgba(56, 189, 248, 0.1);
   border: 1px solid rgba(56, 189, 248, 0.3);
   color: var(--blue);
-}
-
-.dept-chip {
-  display: inline-block;
-  background: rgba(124, 92, 191, 0.15);
-  color: #a78bfa;
-  border-radius: 4px;
-  padding: 1px 7px;
-  font-size: 10px;
-  font-weight: 600;
-  margin-left: 5px;
 }
 
 #results {
