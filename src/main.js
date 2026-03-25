@@ -3,14 +3,11 @@ import * as XLSX from "xlsx";
 // ═══════════════════════════════════════════════════════════════
 // STATE
 // ═══════════════════════════════════════════════════════════════
-let FILES = [],
-  parsedData = {},
+let FILES = []; // all uploaded File objects
+let parsedData = {},
   audit = {},
   logs = [];
-
-// Mapping state: keyed by normalised TS name
-// tsNormKey → { payrollKey, dept }
-const mappingStore = new Map();
+const mappingStore = new Map(); // tsNormKey → {payrollKey, dept}
 
 // ═══════════════════════════════════════════════════════════════
 // CONSTANTS
@@ -22,7 +19,7 @@ const ROLES = [
   { v: "invoice_ys", l: "Yellowstone Invoice" },
   { v: "payroll", l: "Internal Payroll Summary" },
   { v: "adp", l: "ADP Export (CSV)" },
-  { v: "ignore", l: "— Ignore —" },
+  { v: "ignore", l: "— Ignore this file —" },
 ];
 
 const DEPT_NORM = {
@@ -31,7 +28,6 @@ const DEPT_NORM = {
   administrador: "administrador",
   proyec: "yellowstone",
 };
-
 const INV_DESC_MAP = {
   housekeeper: "housekeeper",
   "housekeeper ot": "housekeeper_ot",
@@ -50,7 +46,6 @@ const INV_DESC_MAP = {
   villa: "housekeeper",
   "villa ot": "housekeeper_ot",
 };
-
 const YELLOWSTONE_DEPTS = new Set(["yellowstone", "proyec"]);
 
 // ═══════════════════════════════════════════════════════════════
@@ -76,6 +71,10 @@ const capName = (s) =>
     .split(" ")
     .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
     .join(" ");
+const fmtSize = (b) =>
+  b > 1048576
+    ? (b / 1048576).toFixed(1) + " MB"
+    : (b / 1024).toFixed(0) + " KB";
 
 function detectRole(name) {
   const n = name.toLowerCase();
@@ -99,18 +98,6 @@ function detectRole(name) {
   return "ignore";
 }
 
-function getRoleMap() {
-  const rm = {};
-  FILES.forEach((f, i) => {
-    const role = document.getElementById(`r${i}`).value;
-    if (role !== "ignore") {
-      if (!rm[role]) rm[role] = [];
-      rm[role].push(f);
-    }
-  });
-  return rm;
-}
-
 function readBuf(file) {
   return new Promise((res, rej) => {
     const r = new FileReader();
@@ -130,18 +117,12 @@ async function toRaw(file) {
   });
 }
 
-function setStep(n) {
-  [1, 2, 3].forEach((i) => {
-    const el = document.getElementById(`stp${i}`);
-    el.className = "step" + (i < n ? " done" : i === n ? " active" : "");
-  });
-}
-
 // ═══════════════════════════════════════════════════════════════
-// FILE UPLOAD / ROLE UI  (Step 1)
+// FILE UPLOAD — SINGLE DROP ZONE (multi-file)
 // ═══════════════════════════════════════════════════════════════
 const dz = document.getElementById("dropZone");
 const fi = document.getElementById("fileInput");
+
 dz.addEventListener("dragover", (e) => {
   e.preventDefault();
   dz.classList.add("drag-over");
@@ -154,22 +135,81 @@ dz.addEventListener("drop", (e) => {
 });
 fi.addEventListener("change", () => handleFiles([...fi.files]));
 
-function handleFiles(files) {
-  FILES = files;
+function handleFiles(newFiles) {
+  // Merge with existing FILES (avoid duplicates by name)
+  const existingNames = new Set(FILES.map((f) => f.name));
+  newFiles.forEach((f) => {
+    if (!existingNames.has(f.name)) FILES.push(f);
+  });
+  renderRoleGrid();
+  updateRunReady();
+}
+
+function renderRoleGrid() {
   const grid = document.getElementById("roleGrid");
   grid.innerHTML = "";
-  files.forEach((f, i) => {
+  FILES.forEach((f, i) => {
     const role = detectRole(f.name);
     const ext = f.name.split(".").pop().toUpperCase();
-    const item = document.createElement("div");
-    item.className = "role-item";
-    item.innerHTML = `<span style="font-size:18px">${ext === "CSV" ? "📄" : "📊"}</span>
-      <span class="fname" title="${f.name}">${f.name}</span>
-      <select id="r${i}">${ROLES.map((r) => `<option value="${r.v}"${r.v === role ? " selected" : ""}>${r.l}</option>`).join("")}</select>`;
-    grid.appendChild(item);
+    const icon = ext === "CSV" ? "📄" : "📊";
+    const row = document.createElement("div");
+    row.className = "file-role-row";
+    row.innerHTML = `
+      <div class="fr-icon">${icon}</div>
+      <div class="fr-info">
+        <div class="fr-name" title="${f.name}">${f.name}</div>
+        <div class="fr-size">${fmtSize(f.size)} · ${ext}</div>
+      </div>
+      <select class="fr-select" id="r${i}">
+        ${ROLES.map((r) => `<option value="${r.v}"${r.v === role ? " selected" : ""}>${r.l}</option>`).join("")}
+      </select>`;
+    grid.appendChild(row);
   });
-  document.getElementById("rolePanel").style.display = "block";
-  setStep(1);
+
+  document.getElementById("rolePanel").style.display =
+    FILES.length > 0 ? "block" : "none";
+  document.getElementById("runRow").style.display =
+    FILES.length > 0 ? "flex" : "none";
+}
+
+function getRoleMap() {
+  const rm = {};
+  FILES.forEach((f, i) => {
+    const role = document.getElementById(`r${i}`).value;
+    if (role !== "ignore") {
+      if (!rm[role]) rm[role] = [];
+      rm[role].push(f);
+    }
+  });
+  return rm;
+}
+
+function updateRunReady() {
+  const rm = getRoleMap();
+  const ready =
+    FILES.length > 0 &&
+    (rm.week1 || []).length > 0 &&
+    (rm.week2 || []).length > 0 &&
+    (rm.payroll || []).length > 0;
+  document.getElementById("sbRunBtn").classList.toggle("ready", ready);
+  document.getElementById("mainRunBtn").classList.toggle("ready", ready);
+  // Update sidebar slot indicators
+  const slots = [
+    "week1",
+    "week2",
+    "invoice_msh",
+    "payroll",
+    "adp",
+    "invoice_ys",
+  ];
+  slots.forEach((role) => {
+    const count = (rm[role] || []).length;
+    const el = document.getElementById(`sb-${role}`);
+    const countEl = el.querySelector(".sb-slot-count");
+    el.classList.toggle("loaded", count > 0);
+    el.classList.toggle("multi", count > 1);
+    countEl.textContent = count;
+  });
 }
 
 function resetAll() {
@@ -179,58 +219,74 @@ function resetAll() {
   logs = [];
   mappingStore.clear();
   fi.value = "";
-  ["rolePanel", "mappingPanel", "results"].forEach(
-    (id) => (document.getElementById(id).style.display = "none"),
-  );
   document.getElementById("roleGrid").innerHTML = "";
+  document.getElementById("rolePanel").style.display = "none";
+  document.getElementById("runRow").style.display = "none";
   document.getElementById("mapRows").innerHTML = "";
   document.getElementById("alertBanners").innerHTML = "";
-  setStep(1);
+  showScreen("scr-upload");
+  setSideStep(1);
+  updateRunReady();
 }
 
 // ═══════════════════════════════════════════════════════════════
-// MAPPING UI  (Step 2)
+// SCREEN / STEP NAVIGATION
 // ═══════════════════════════════════════════════════════════════
-async function showMapping() {
-  const btn = document.getElementById("toMappingBtn");
-  btn.disabled = true;
-  btn.textContent = "⏳ Loading…";
+function showScreen(id) {
+  document
+    .querySelectorAll(".screen")
+    .forEach((s) => s.classList.remove("active"));
+  document.getElementById(id).classList.add("active");
+}
 
+function setSideStep(n) {
+  ["sbs1", "sbs2", "sbs3"].forEach((id, i) => {
+    const el = document.getElementById(id);
+    el.classList.remove("active", "done");
+    if (i + 1 < n) el.classList.add("done");
+    if (i + 1 === n) el.classList.add("active");
+  });
+}
+
+// ═══════════════════════════════════════════════════════════════
+// MAPPING UI
+// ═══════════════════════════════════════════════════════════════
+async function goToMapping() {
+  const btn1 = document.getElementById("sbRunBtn");
+  const btn2 = document.getElementById("mainRunBtn");
+  btn1.disabled = true;
+  btn2.disabled = true;
+  btn1.textContent = "⏳ Loading…";
+  btn2.textContent = "⏳ Loading…";
+  logs = [];
   try {
-    logs = [];
     const rm = getRoleMap();
 
-    // Parse timesheets to collect all employee names
-    const tsEmps = new Map(); // normKey → displayName
-    const parseAndCollect = async (files, label) => {
+    const tsEmps = new Map();
+    const collect = async (files, lbl) => {
       for (const f of files || []) {
-        const r = parseTimesheet(await toRaw(f), `${label}:${f.name}`);
+        const r = parseTimesheet(await toRaw(f), `${lbl}:${f.name}`);
         Object.entries(r.employees).forEach(([k, v]) => {
           if (!tsEmps.has(k)) tsEmps.set(k, v.name);
         });
       }
     };
-    await parseAndCollect(rm["week1"], "W1");
-    await parseAndCollect(rm["week2"], "W2");
+    await collect(rm["week1"], "W1");
+    await collect(rm["week2"], "W2");
 
-    // Parse payroll to get name options and depts
-    let payrollEmps = {}; // normKey → {name, dept, ...}
+    let payrollEmps = {};
     for (const f of rm["payroll"] || []) {
       const pd = parsePayroll(await toRaw(f), `Payroll:${f.name}`);
       Object.assign(payrollEmps, pd.employees);
     }
-
     const payKeys = Object.keys(payrollEmps);
     const allDepts = [
       ...new Set(payKeys.map((k) => payrollEmps[k].dept).filter(Boolean)),
     ].sort();
 
-    // Build mapping rows
     const rowsEl = document.getElementById("mapRows");
     rowsEl.innerHTML = "";
     mappingStore.clear();
-
-    // Use index-based DOM ids to avoid special-char issues in selectors
     let idx = 0;
     tsEmps.forEach((displayName, tsKey) => {
       const rowId = idx++;
@@ -241,8 +297,6 @@ async function showMapping() {
       const autoDept = autoPayKey
         ? payrollEmps[autoPayKey].dept
         : allDepts[0] || "";
-
-      // Persist initial values
       mappingStore.set(tsKey, { payrollKey: autoPayKey, dept: autoDept });
 
       const payOpts =
@@ -265,61 +319,40 @@ async function showMapping() {
       row.dataset.tskey = tsKey;
       row.dataset.rowid = rowId;
       row.innerHTML = `
-        <div>
-          <div class="map-name">${capName(displayName)}</div>
-          <div class="map-hint">${tsKey}</div>
-        </div>
+        <div><div class="map-emp">${capName(displayName)}</div><div class="map-key">${tsKey}</div></div>
         <select id="mpay_${rowId}" data-tskey="${tsKey}">${payOpts}</select>
         <select id="mdept_${rowId}" data-tskey="${tsKey}">${deptOpts}</select>`;
 
-      // When payroll name changes → auto-update dept
       row.querySelector(`#mpay_${rowId}`).addEventListener("change", (e) => {
         const pk = e.target.value;
         const dept = pk && payrollEmps[pk] ? payrollEmps[pk].dept : "";
-        const deptSel = document.getElementById(`mdept_${rowId}`);
-        if (dept) deptSel.value = dept;
-        mappingStore.set(tsKey, {
-          payrollKey: pk,
-          dept: deptSel.value,
-        });
+        const ds = document.getElementById(`mdept_${rowId}`);
+        if (dept) ds.value = dept;
+        mappingStore.set(tsKey, { payrollKey: pk, dept: ds.value });
       });
       row.querySelector(`#mdept_${rowId}`).addEventListener("change", (e) => {
         const cur = mappingStore.get(tsKey) || {};
         mappingStore.set(tsKey, { ...cur, dept: e.target.value });
       });
-
       rowsEl.appendChild(row);
     });
 
-    document.getElementById("rolePanel").style.display = "none";
-    document.getElementById("mappingPanel").style.display = "block";
-    setStep(2);
+    showScreen("scr-mapping");
+    setSideStep(2);
   } catch (err) {
-    alert("Error loading mapping: " + err.message);
+    alert("Error: " + err.message);
     console.error(err);
   }
-
-  btn.disabled = false;
-  btn.textContent = "➡ Proceed to Employee Mapping";
+  btn1.disabled = false;
+  btn2.disabled = false;
+  btn1.textContent = "▶ RUN VERIFICATION";
+  btn2.textContent = "▶ Run Verification";
 }
 
-function backToRoles() {
-  document.getElementById("mappingPanel").style.display = "none";
-  document.getElementById("rolePanel").style.display = "block";
-  setStep(1);
-}
-
-function backToMapping() {
-  document.getElementById("results").style.display = "none";
-  document.getElementById("mappingPanel").style.display = "block";
-  setStep(2);
-}
-
-// Collect current mapping UI state into mappingStore before audit
 function collectMappings() {
   document.querySelectorAll(".map-row").forEach((row) => {
-    const tsKey = row.dataset.tskey;
-    const rowId = row.dataset.rowid;
+    const tsKey = row.dataset.tskey,
+      rowId = row.dataset.rowid;
     const payrollKey = document.getElementById(`mpay_${rowId}`).value;
     const dept = document.getElementById(`mdept_${rowId}`).value;
     mappingStore.set(tsKey, { payrollKey, dept });
@@ -327,15 +360,13 @@ function collectMappings() {
 }
 
 // ═══════════════════════════════════════════════════════════════
-// TIMESHEET PARSER — dynamic column detection
+// PARSERS (identical logic from v3)
 // ═══════════════════════════════════════════════════════════════
 function parseTimesheet(raw, label) {
   const employees = {};
   let weekStart = null,
     weekEnd = null,
     company = null;
-
-  // Scan header rows for dates / company
   for (let r = 0; r < Math.min(15, raw.length); r++) {
     const row = raw[r] || [];
     for (let c = 0; c < row.length; c++) {
@@ -362,8 +393,6 @@ function parseTimesheet(raw, label) {
         company = v.replace(/COMPANY NAME[:]/, "").trim();
     }
   }
-
-  // Dynamically find nameCol, timeInKeyCol, totalHrsCol
   let nameCol = 0,
     timeInKeyCol = 3,
     totalHrsCol = 25;
@@ -390,13 +419,11 @@ function parseTimesheet(raw, label) {
         }
         log(
           "INFO",
-          `[${label}] Layout: nameCol=${nameCol} timeInKeyCol=${timeInKeyCol} totalHrsCol=${totalHrsCol}`,
+          `[${label}] Layout: nameCol=${nameCol} timeInCol=${timeInKeyCol} totalCol=${totalHrsCol}`,
         );
       }
     }
   }
-
-  // Extract employees
   let currentName = null;
   const SKIP = new Set([
     "ASSOCIATE NAME:",
@@ -413,7 +440,7 @@ function parseTimesheet(raw, label) {
     const isTiming = ["Time In", "Time Out", "BREAK", "Hours"].some((k) =>
       c0.includes(k),
     );
-    const isHeader =
+    const isHdr =
       c0.startsWith("COMPANY") ||
       c0.startsWith("Manager") ||
       c0.startsWith("Week") ||
@@ -422,14 +449,12 @@ function parseTimesheet(raw, label) {
       c0 &&
       !SKIP.has(c0) &&
       !isTiming &&
-      !isHeader &&
+      !isHdr &&
       isNaN(Number(c0)) &&
       c0.length > 1
-    ) {
+    )
       currentName = c0;
-    }
-    const timeKeyVal = String(row[timeInKeyCol] || "").trim();
-    if (timeKeyVal === "Time Out" && currentName) {
+    if (String(row[timeInKeyCol] || "").trim() === "Time Out" && currentName) {
       let total = toNum(row[totalHrsCol]);
       if (total === 0) total = toNum(row[totalHrsCol + 1]);
       if (total === 0) {
@@ -446,30 +471,23 @@ function parseTimesheet(raw, label) {
         const prev = employees[key] || { name: currentName, hours: 0 };
         prev.hours += total;
         employees[key] = prev;
-        log(
-          "OK",
-          `[${label}] ${currentName}: +${total.toFixed(2)} hrs → total=${prev.hours.toFixed(2)}`,
-        );
+        log("OK", `[${label}] ${currentName}: +${total.toFixed(2)} hrs`);
       }
     }
   }
   log(
     "INFO",
-    `[${label}] Period: ${weekStart || "?"} → ${weekEnd || "?"} | Found: ${Object.keys(employees).length} employees`,
+    `[${label}] ${weekStart || "?"} → ${weekEnd || "?"} | ${Object.keys(employees).length} employees`,
   );
   return { employees, weekStart, weekEnd, company };
 }
 
-// ═══════════════════════════════════════════════════════════════
-// PAYROLL SUMMARY PARSER
-// ═══════════════════════════════════════════════════════════════
 function parsePayroll(raw, label) {
   const employees = {},
     depts = {};
   let currentName = null,
     currentDept = null,
     period = null;
-
   for (const row of raw) {
     if (!row) continue;
     const v = String(row[4] || "").trim();
@@ -478,15 +496,12 @@ function parsePayroll(raw, label) {
       break;
     }
   }
-
   const DEPT_HDR =
     /^(HOUSEKEEPING|HOUSEKEEPING SCOTTSDALE|ADMINISTRADOR|PROYEC|CHEF|MAINTENANCE|POOL|COOK)$/i;
-
   for (let r = 0; r < raw.length; r++) {
-    const row = raw[r] || [];
-    const col1 = String(row[1] || "").trim();
+    const row = raw[r] || [],
+      col1 = String(row[1] || "").trim();
     if (!col1 || col1 === "nan" || col1 === "NaT") continue;
-
     const dataInRow = [4, 5, 6, 7, 8, 9, 10, 11, 12].some(
       (c) =>
         toNum(row[c]) > 0 ||
@@ -494,10 +509,9 @@ function parsePayroll(raw, label) {
     );
     if (DEPT_HDR.test(col1) && !dataInRow) {
       currentDept = col1.trim().toUpperCase();
-      log("INFO", `[${label}] Dept section: ${currentDept}`);
+      log("INFO", `[${label}] Dept: ${currentDept}`);
       continue;
     }
-
     const structural = [
       "MSH Hospitality",
       "ASSOCIATE NAME:",
@@ -511,29 +525,24 @@ function parsePayroll(raw, label) {
     if (structural.some((s) => col1.toLowerCase() === s.toLowerCase()))
       continue;
     if (col1.match(/^\d{2}\.\d{2}/)) continue;
-
     const nextRow = raw[r + 1] || [];
-    const hasNextHours =
+    const hasNextH =
       toNum(nextRow[4]) > 0 ||
       toNum(nextRow[5]) > 0 ||
       toNum(nextRow[6]) > 0 ||
       toNum(nextRow[7]) > 0;
-    const hasCurrentHours = toNum(row[4]) > 0 || toNum(row[6]) > 0;
-    const hasFileNum = String(row[8] || "")
+    const hasCurrH = toNum(row[4]) > 0 || toNum(row[6]) > 0;
+    const hasFileN = String(row[8] || "")
       .trim()
       .match(/^\d+$/);
-
     if (col1 && isNaN(Number(col1)) && !DEPT_HDR.test(col1)) currentName = col1;
-
-    if (currentName && (hasCurrentHours || hasNextHours || hasFileNum)) {
-      const dataRow = hasCurrentHours ? row : hasNextHours ? nextRow : row;
-      const w1reg = toNum(dataRow[4]),
-        w1ot = toNum(dataRow[5]);
-      const w2reg = toNum(dataRow[6]),
-        w2ot = toNum(dataRow[7]);
-      const fileNum = String(dataRow[8] || "").trim();
-      const adpReg = toNum(dataRow[11]),
-        adpOT = toNum(dataRow[12]);
+    if (currentName && (hasCurrH || hasNextH || hasFileN)) {
+      const dr = hasCurrH ? row : hasNextH ? nextRow : row;
+      const w1reg = toNum(dr[4]),
+        w1ot = toNum(dr[5]),
+        w2reg = toNum(dr[6]),
+        w2ot = toNum(dr[7]);
+      const fileNum = String(dr[8] || "").trim();
       const totalReg = w1reg + w2reg,
         totalOT = w1ot + w2ot;
       if (totalReg > 0 || totalOT > 0 || fileNum.match(/^\d{3,}/)) {
@@ -549,28 +558,25 @@ function parsePayroll(raw, label) {
           totalOT,
           totalHours: totalReg + totalOT,
           fileNum,
-          adpReg,
-          adpOT,
+          adpReg: toNum(dr[11]),
+          adpOT: toNum(dr[12]),
         };
         depts[currentDept || "UNKNOWN"] =
           (depts[currentDept || "UNKNOWN"] || 0) + totalReg + totalOT;
         log(
           "OK",
-          `[${label}] ${currentName} [${currentDept}] W1=${w1reg}+${w1ot}OT W2=${w2reg}+${w2ot}OT File#${fileNum}`,
+          `[${label}] ${currentName} [${currentDept}] W1=${w1reg}+${w1ot}OT W2=${w2reg}+${w2ot}OT #${fileNum}`,
         );
       }
     }
   }
   log(
     "INFO",
-    `[${label}] Period: ${period} | Employees: ${Object.keys(employees).length}`,
+    `[${label}] Period: ${period} | ${Object.keys(employees).length} employees`,
   );
   return { employees, depts, period };
 }
 
-// ═══════════════════════════════════════════════════════════════
-// MSH INVOICE PARSER
-// ═══════════════════════════════════════════════════════════════
 function parseInvoiceMSH(raw, label) {
   const lines = [];
   let invoiceNum = null,
@@ -594,7 +600,7 @@ function parseInvoiceMSH(raw, label) {
         hours,
         amount,
       });
-      log("OK", `[${label}] Line: "${c0}" ${hours}h @ $${rate}`);
+      log("OK", `[${label}] "${c0}" ${hours}h @ $${rate}`);
     }
   }
   log(
@@ -604,9 +610,6 @@ function parseInvoiceMSH(raw, label) {
   return { lines, invoiceNum, period };
 }
 
-// ═══════════════════════════════════════════════════════════════
-// YELLOWSTONE INVOICE PARSER
-// ═══════════════════════════════════════════════════════════════
 function parseInvoiceYS(raw, label) {
   let amount = 0,
     invoiceNum = null,
@@ -625,20 +628,16 @@ function parseInvoiceYS(raw, label) {
   }
   if (amount === 0) {
     for (const row of raw) {
-      const v = toNum(row?.[3] || 0);
-      if (v > amount) amount = v;
+      if (row) {
+        const v = toNum(row[3]);
+        if (v > amount) amount = v;
+      }
     }
   }
-  log(
-    "INFO",
-    `[${label}] YS Invoice #${invoiceNum} Period: ${period} Amount: $${amount}`,
-  );
+  log("INFO", `[${label}] YS Invoice #${invoiceNum} $${amount}`);
   return { amount, invoiceNum, period };
 }
 
-// ═══════════════════════════════════════════════════════════════
-// ADP PARSER
-// ═══════════════════════════════════════════════════════════════
 function parseADP(raw, label) {
   const records = {};
   if (!raw.length) return records;
@@ -650,48 +649,44 @@ function parseADP(raw, label) {
     }
   }
   const headers = (raw[hdr] || []).map((h) => String(h || "").trim());
-  const fi2 = headers.findIndex((h) => h === "File #");
-  const ri = headers.findIndex((h) => h === "Reg Hours");
-  const oi = headers.findIndex((h) => h === "O/T Hours");
+  const fi2 = headers.findIndex((h) => h === "File #"),
+    ri = headers.findIndex((h) => h === "Reg Hours"),
+    oi = headers.findIndex((h) => h === "O/T Hours");
   for (let r = hdr + 1; r < raw.length; r++) {
-    const row = raw[r] || [];
-    const fn = String(row[fi2] || "").trim();
+    const row = raw[r] || [],
+      fn = String(row[fi2] || "").trim();
     const reg = toNum(row[ri]),
       ot = toNum(row[oi]);
     if (fn && (reg || ot)) {
       records[fn] = { fileNum: fn, reg, ot, total: reg + ot };
-      log("OK", `[${label}] File #${fn}: Reg=${reg} OT=${ot}`);
+      log("OK", `[${label}] #${fn} Reg=${reg} OT=${ot}`);
     }
   }
-  log("INFO", `[${label}] ADP records: ${Object.keys(records).length}`);
+  log("INFO", `[${label}] ${Object.keys(records).length} ADP records`);
   return records;
 }
 
 // ═══════════════════════════════════════════════════════════════
-// MAIN AUDIT  (Step 3)
+// MAIN AUDIT
 // ═══════════════════════════════════════════════════════════════
 async function runAudit() {
-  // Snapshot current mapping UI state
   collectMappings();
-
   logs = [];
   parsedData = {};
   audit = {};
   const btn = document.getElementById("auditBtn");
   btn.disabled = true;
-  btn.textContent = "⏳ Running audit…";
-
+  btn.textContent = "⏳ Running…";
   try {
     const rm = getRoleMap();
 
-    // ── Parse timesheets ──
-    const combineTS = async (files, weekLabel) => {
+    const combineTS = async (files, lbl) => {
       const combined = {};
       let start = null,
         end = null,
         company = null;
       for (const f of files || []) {
-        const r = parseTimesheet(await toRaw(f), `${weekLabel}:${f.name}`);
+        const r = parseTimesheet(await toRaw(f), `${lbl}:${f.name}`);
         Object.entries(r.employees).forEach(([k, v]) => {
           combined[k] = combined[k]
             ? { ...v, hours: combined[k].hours + v.hours }
@@ -710,22 +705,16 @@ async function runAudit() {
     parsedData.w1 = w1;
     parsedData.w2 = w2;
 
-    // ── Parse payroll ──
     let payrollData = { employees: {}, depts: {}, period: null };
-    for (const f of rm["payroll"] || []) {
+    for (const f of rm["payroll"] || [])
       payrollData = parsePayroll(await toRaw(f), `Payroll:${f.name}`);
-    }
     parsedData.payroll = payrollData;
 
-    // ── Build biweekly using mapping ──
-    //  mappingStore: tsNormKey → {payrollKey, dept}
-    //  The "biweekly" key is the payrollKey (if mapped) or the tsNormKey (unmapped)
     const allTSKeys = new Set([
       ...Object.keys(w1.emps),
       ...Object.keys(w2.emps),
     ]);
     const biweekly = {};
-
     allTSKeys.forEach((tsKey) => {
       const e1 = w1.emps[tsKey] || { name: tsKey, hours: 0 };
       const e2 = w2.emps[tsKey] || { name: tsKey, hours: 0 };
@@ -744,12 +733,11 @@ async function runAudit() {
       const displayName = capName(
         payrollData.employees[resolvedKey]?.name || e1.name || e2.name,
       );
-
       if (biweekly[resolvedKey]) {
         biweekly[resolvedKey].w1 += e1.hours;
         biweekly[resolvedKey].w2 += e2.hours;
         biweekly[resolvedKey].total += e1.hours + e2.hours;
-      } else {
+      } else
         biweekly[resolvedKey] = {
           name: displayName,
           dept,
@@ -758,18 +746,15 @@ async function runAudit() {
           w2: e2.hours,
           total: e1.hours + e2.hours,
         };
-      }
     });
     parsedData.biweekly = biweekly;
 
-    // ── Parse invoices ──
     const invoiceLines = [];
-    for (const f of rm["invoice_msh"] || []) {
+    for (const f of rm["invoice_msh"] || [])
       invoiceLines.push(parseInvoiceMSH(await toRaw(f), `MSHInv:${f.name}`));
-    }
     parsedData.invoices = invoiceLines;
     const invByCanon = {};
-    invoiceLines.forEach((inv) => {
+    invoiceLines.forEach((inv) =>
       inv.lines.forEach((l) => {
         if (!invByCanon[l.canonKey])
           invByCanon[l.canonKey] = {
@@ -780,28 +765,24 @@ async function runAudit() {
           };
         invByCanon[l.canonKey].hours += l.hours;
         invByCanon[l.canonKey].amount += l.amount;
-      });
-    });
+      }),
+    );
     parsedData.invByCanon = invByCanon;
 
     const ysInvoices = [];
-    for (const f of rm["invoice_ys"] || []) {
+    for (const f of rm["invoice_ys"] || [])
       ysInvoices.push(parseInvoiceYS(await toRaw(f), `YSInv:${f.name}`));
-    }
     parsedData.ysInvoices = ysInvoices;
 
     let adpRecords = {};
-    for (const f of rm["adp"] || []) {
+    for (const f of rm["adp"] || [])
       adpRecords = parseADP(await toRaw(f), `ADP:${f.name}`);
-    }
     parsedData.adp = adpRecords;
 
-    // ── Audit 1: Employee overview ──
     audit.employees = Object.values(biweekly)
       .filter((e) => e.total > 0)
       .sort((a, b) => b.total - a.total);
 
-    // ── Audit 2: Dept vs Invoice ──
     const deptHoursTS = {};
     Object.values(biweekly).forEach((e) => {
       if (e.isYS) return;
@@ -833,7 +814,6 @@ async function runAudit() {
       (a, b) => Math.abs(b.diff || 0) - Math.abs(a.diff || 0),
     );
 
-    // ── Audit 3: TS vs Payroll per employee (100% match) ──
     const allEmpKeys = new Set([
       ...Object.keys(biweekly),
       ...Object.keys(payrollData.employees),
@@ -874,7 +854,6 @@ async function runAudit() {
       return Math.abs(b.diff || 0) - Math.abs(a.diff || 0);
     });
 
-    // ── Audit 4: Payroll vs ADP (100% match) ──
     audit.adpComparisons = [];
     Object.values(payrollData.employees).forEach((p) => {
       const adp = adpRecords[p.fileNum];
@@ -905,7 +884,7 @@ async function runAudit() {
         !Object.values(payrollData.employees).find(
           (p) => p.fileNum === a.fileNum,
         )
-      ) {
+      )
         audit.adpComparisons.push({
           name: "—",
           fileNum: a.fileNum,
@@ -920,7 +899,6 @@ async function runAudit() {
           mismatch: true,
           missingPayroll: true,
         });
-      }
     });
     audit.adpComparisons.sort((a, b) => {
       if (a.mismatch !== b.mismatch) return a.mismatch ? -1 : 1;
@@ -928,16 +906,12 @@ async function runAudit() {
     });
 
     renderResults();
-    document.getElementById("mappingPanel").style.display = "none";
-    document.getElementById("results").style.display = "block";
-    setStep(3);
-    document.getElementById("results").scrollIntoView({ behavior: "smooth" });
+    showScreen("scr-results");
+    setSideStep(3);
   } catch (err) {
     log("ERR", "Fatal: " + err.message);
     console.error(err);
-    alert(
-      "Processing error: " + err.message + "\n\nSee Parse Log for details.",
-    );
+    alert("Error: " + err.message);
   }
   btn.disabled = false;
   btn.textContent = "▶ Run Payroll Audit";
@@ -958,16 +932,14 @@ function renderResults() {
   const p = parsedData,
     a = audit;
 
-  // Period bar
   document.getElementById("pbar").innerHTML = `
     <div>📅 W1: <span>${p.w1.start || "?"}</span> → <span>${p.w1.end || "?"}</span></div>
     <div>📅 W2: <span>${p.w2.start || "?"}</span> → <span>${p.w2.end || "?"}</span></div>
     <div>🏢 <span>${p.w1.company || p.w2.company || "The Buttes"}</span></div>
     <div>👥 Employees: <span>${a.employees.length}</span></div>
-    <div>⏱ Total TS hrs: <span>${a.employees.reduce((s, e) => s + e.total, 0).toFixed(2)}</span></div>
-    <div>🔵 Yellowstone employees: <span>${a.employees.filter((e) => e.isYS).length}</span></div>`;
+    <div>⏱ Total hrs: <span>${a.employees.reduce((s, e) => s + e.total, 0).toFixed(2)}</span></div>
+    <div>🔵 Yellowstone: <span>${a.employees.filter((e) => e.isYS).length}</span></div>`;
 
-  // Summary cards
   const payMM = a.payComparisons.filter((r) => r.mismatch).length;
   const adpMM = a.adpComparisons.filter((r) => r.mismatch).length;
   const deptMM = a.deptComparison.filter((r) => r.mismatch).length;
@@ -978,157 +950,121 @@ function renderResults() {
   document.getElementById("cards").innerHTML = `
     <div class="card ${total === 0 ? "ok" : "err"}"><div class="lbl">Total Issues</div><div class="val">${total}</div><div class="sub">${total === 0 ? "All checks passed ✓" : "Requires review"}</div></div>
     <div class="card ${deptMM === 0 ? "ok" : "warn"}"><div class="lbl">Dept vs Invoice</div><div class="val">${deptMM}</div><div class="sub">dept-level mismatches</div></div>
-    <div class="card ${payMM === 0 ? "ok" : "err"}"><div class="lbl">TS vs Payroll</div><div class="val">${payMM}</div><div class="sub">employee-level mismatches</div></div>
-    <div class="card ${adpMM === 0 ? "ok" : "err"}"><div class="lbl">Payroll vs ADP</div><div class="val">${adpMM}</div><div class="sub">employee-level mismatches</div></div>
-    <div class="card ${missPay === 0 ? "ok" : "warn"}"><div class="lbl">Missing Records</div><div class="val">${missPay}</div><div class="sub">employees in one source only</div></div>`;
+    <div class="card ${payMM === 0 ? "ok" : "err"}"><div class="lbl">TS vs Payroll</div><div class="val">${payMM}</div><div class="sub">employee mismatches</div></div>
+    <div class="card ${adpMM === 0 ? "ok" : "err"}"><div class="lbl">Payroll vs ADP</div><div class="val">${adpMM}</div><div class="sub">employee mismatches</div></div>
+    <div class="card ${missPay === 0 ? "ok" : "warn"}"><div class="lbl">Missing Records</div><div class="val">${missPay}</div><div class="sub">one source only</div></div>`;
 
-  // Alert banners
   const banners = [];
   const ysEmps = a.employees.filter((e) => e.isYS);
-  if (ysEmps.length > 0) {
-    const ysInvTotal = p.ysInvoices.reduce((s, i) => s + i.amount, 0);
-    banners.push(`<div class="alert alert-ys">🔵 <div><strong>Yellowstone Activity LLC (${ysEmps.length} employee${ysEmps.length > 1 ? "s" : ""}):</strong>
-      ${ysEmps.map((e) => `<strong>${e.name}</strong>`).join(", ")} — On hotel timesheets but billed separately via Yellowstone invoices
-      totalling <strong>$${ysInvTotal.toFixed(2)}</strong> (${p.ysInvoices.map((i) => `Invoice #${i.invoiceNum}`).join(", ")}).
-      Excluded from dept-vs-invoice comparison. Must still match 100% in TS↔Payroll and Payroll↔ADP.</div></div>`);
-  }
-  if (payMM > 0) {
-    const names = a.payComparisons
-      .filter((r) => r.mismatch)
-      .map(
-        (r) =>
-          `<strong>${r.name}</strong> (Δ ${r.diff != null ? (r.diff > 0 ? "+" : "") + r.diff.toFixed(2) : "?"} hrs)`,
-      )
-      .join(", ");
+  if (ysEmps.length) {
+    const yst = p.ysInvoices.reduce((s, i) => s + i.amount, 0);
     banners.push(
-      `<div class="alert alert-err">✗ <div><strong>Timesheet vs Payroll Mismatches (${payMM}):</strong> ${names}</div></div>`,
+      `<div class="alert alert-ys">🔵 <div><strong>Yellowstone Activity LLC (${ysEmps.length}):</strong> ${ysEmps.map((e) => `<strong>${e.name}</strong>`).join(", ")} — Billed separately via Yellowstone invoices totalling <strong>$${yst.toFixed(2)}</strong>. Excluded from dept-vs-invoice; must match 100% in TS↔Payroll and Payroll↔ADP.</div></div>`,
     );
   }
-  if (adpMM > 0) {
-    const names = a.adpComparisons
-      .filter((r) => r.mismatch)
-      .map((r) => `<strong>${r.name}</strong> File#${r.fileNum}`)
-      .join(", ");
+  if (payMM)
     banners.push(
-      `<div class="alert alert-err">✗ <div><strong>Payroll vs ADP Mismatches (${adpMM}):</strong> ${names}</div></div>`,
+      `<div class="alert alert-err">✗ <div><strong>TS vs Payroll Mismatches (${payMM}):</strong> ${a.payComparisons
+        .filter((r) => r.mismatch)
+        .map(
+          (r) =>
+            `<strong>${r.name}</strong> (Δ ${r.diff != null ? (r.diff > 0 ? "+" : "") + r.diff.toFixed(2) : "?"} hrs)`,
+        )
+        .join(", ")}</div></div>`,
     );
-  }
-  if (deptMM > 0) {
-    const names = a.deptComparison
-      .filter((r) => r.mismatch)
-      .map(
-        (r) =>
-          `<strong>${r.desc}</strong> (Δ ${r.diff != null ? (r.diff > 0 ? "+" : "") + r.diff.toFixed(2) : "?"} hrs)`,
-      )
-      .join(", ");
+  if (adpMM)
     banners.push(
-      `<div class="alert alert-warn">⚠ <div><strong>Dept/Invoice Hour Differences (${deptMM}):</strong> ${names}</div></div>`,
+      `<div class="alert alert-err">✗ <div><strong>Payroll vs ADP Mismatches (${adpMM}):</strong> ${a.adpComparisons
+        .filter((r) => r.mismatch)
+        .map((r) => `<strong>${r.name}</strong> #${r.fileNum}`)
+        .join(", ")}</div></div>`,
     );
-  }
+  if (deptMM)
+    banners.push(
+      `<div class="alert alert-warn">⚠ <div><strong>Dept/Invoice Differences (${deptMM}):</strong> ${a.deptComparison
+        .filter((r) => r.mismatch)
+        .map(
+          (r) =>
+            `<strong>${r.desc}</strong> (Δ ${r.diff != null ? (r.diff > 0 ? "+" : "") + r.diff.toFixed(2) : "?"} hrs)`,
+        )
+        .join(", ")}</div></div>`,
+    );
   document.getElementById("alertBanners").innerHTML = banners.join("");
 
-  // Tab badges
   document.getElementById("tb0").textContent = a.employees.length;
-  document.getElementById("tb1").textContent = deptMM > 0 ? `${deptMM} ⚠` : "✓";
-  document.getElementById("tb2").textContent = payMM > 0 ? `${payMM} ✗` : "✓";
-  document.getElementById("tb3").textContent = adpMM > 0 ? `${adpMM} ✗` : "✓";
+  document.getElementById("tb1").textContent = deptMM ? `${deptMM} ⚠` : "✓";
+  document.getElementById("tb2").textContent = payMM ? `${payMM} ✗` : "✓";
+  document.getElementById("tb3").textContent = adpMM ? `${adpMM} ✗` : "✓";
 
-  // Tab 0: Employees
   document.getElementById("empTable").innerHTML = `
-    <thead><tr><th>#</th><th>Employee Name</th><th>Department</th><th>Entity</th><th>Week 1 Hrs</th><th>Week 2 Hrs</th><th>Biweekly Total</th></tr></thead>
+    <thead><tr><th>#</th><th>Employee</th><th>Department</th><th>Entity</th><th>Week 1</th><th>Week 2</th><th>Total</th></tr></thead>
     <tbody>${
       a.employees
         .map(
           (e, i) => `<tr class="${e.isYS ? "tr-ys" : ""}">
-      <td style="color:var(--muted)">${i + 1}</td>
-      <td class="emp-name">${e.name}</td>
+      <td style="color:var(--muted)">${i + 1}</td><td class="emp-name">${e.name}</td>
       <td><span class="badge b-dept">${e.dept}</span></td>
       <td>${e.isYS ? '<span class="badge b-ys">🔵 Yellowstone LLC</span>' : '<span class="badge b-info">MSH Hospitality</span>'}</td>
-      <td class="num">${fmtH(e.w1)}</td>
-      <td class="num">${fmtH(e.w2)}</td>
-      <td class="num"><strong>${fmtH(e.total)}</strong></td>
-    </tr>`,
+      <td class="num">${fmtH(e.w1)}</td><td class="num">${fmtH(e.w2)}</td>
+      <td class="num"><strong>${fmtH(e.total)}</strong></td></tr>`,
         )
         .join("") ||
-      '<tr><td colspan="7" style="text-align:center;color:var(--muted);padding:28px">No timesheet data parsed</td></tr>'
+      '<tr><td colspan="7" style="text-align:center;color:var(--muted);padding:28px">No timesheet data</td></tr>'
     }</tbody>`;
 
-  // Tab 1: Dept vs Invoice
-  const ysInvTotal2 = p.ysInvoices.reduce((s, i) => s + i.amount, 0);
+  const ysInvTotal = p.ysInvoices.reduce((s, i) => s + i.amount, 0);
   document.getElementById("tc1-inner").innerHTML = `
-    ${
-      ysEmps.length > 0
-        ? `<div class="alert alert-ys" style="margin-bottom:14px">🔵 <div>
-      Yellowstone LLC employees (<strong>${ysEmps.map((e) => e.name).join(", ")}</strong>) are excluded.
-      Billed separately: <strong>$${ysInvTotal2.toFixed(2)}</strong> (${p.ysInvoices.map((i) => `Invoice #${i.invoiceNum}`).join(", ")}).
-    </div></div>`
-        : ""
-    }
+    ${ysEmps.length ? `<div class="alert alert-ys" style="margin-bottom:12px">🔵 <div>Yellowstone LLC employees (<strong>${ysEmps.map((e) => e.name).join(", ")}</strong>) excluded. Billed separately: <strong>$${ysInvTotal.toFixed(2)}</strong> (${p.ysInvoices.map((i) => `Invoice #${i.invoiceNum}`).join(", ")}).</div></div>` : ""}
     <div class="twrap"><table>
-      <thead><tr><th>Dept / Role</th><th>TS Hours (biweekly)</th><th>Invoice Hours (biweekly)</th><th>Δ Diff</th><th>Rate/hr</th><th>Invoiced Amount</th><th>Status</th></tr></thead>
+      <thead><tr><th>Dept / Role</th><th>TS Hours</th><th>Invoice Hours</th><th>Δ Diff</th><th>Rate/hr</th><th>Amount</th><th>Status</th></tr></thead>
       <tbody>${
         a.deptComparison
           .map(
             (r) => `<tr class="${r.mismatch ? "tr-mismatch" : ""}">
-        <td><strong>${r.desc}</strong></td>
-        <td class="num">${fmtH(r.tsHours)}</td>
-        <td class="num">${fmtH(r.invHours)}</td>
+        <td><strong>${r.desc}</strong></td><td class="num">${fmtH(r.tsHours)}</td><td class="num">${fmtH(r.invHours)}</td>
         <td class="num ${diffCls(r.diff)}">${r.diff !== null ? (r.diff > 0 ? "+" : "") + r.diff.toFixed(2) : "—"}</td>
-        <td class="num">${r.rate ? "$" + r.rate.toFixed(2) : "—"}</td>
-        <td class="num">${r.amount ? "$" + r.amount.toFixed(2) : "—"}</td>
-        <td>${diffBadge(r.diff)}</td>
-      </tr>`,
+        <td class="num">${r.rate ? "$" + r.rate.toFixed(2) : "—"}</td><td class="num">${r.amount ? "$" + r.amount.toFixed(2) : "—"}</td>
+        <td>${diffBadge(r.diff)}</td></tr>`,
           )
           .join("") ||
-        '<tr><td colspan="7" style="text-align:center;color:var(--muted);padding:28px">No invoice data — upload MSH Invoice files</td></tr>'
+        '<tr><td colspan="7" style="text-align:center;color:var(--muted);padding:28px">No invoice data uploaded</td></tr>'
       }</tbody>
-    </table></div>
-    <div style="margin-top:14px;font-size:12px;color:var(--muted)">
-      <strong style="color:var(--text)">Note:</strong> Dept totals aggregate all non-Yellowstone employees by department.
-      "Housekeeper" on the invoice = all employees in the <em>HOUSEKEEPING</em> department on timesheets.
-    </div>`;
+    </table></div>`;
 
-  // Tab 2: TS vs Payroll
   document.getElementById("payTable").innerHTML = `
-    <thead><tr><th>Employee</th><th>Dept</th><th>Entity</th><th>TS W1</th><th>TS W2</th><th>TS Total</th><th>Pay W1</th><th>Pay W2</th><th>Pay Total</th><th>Δ Diff</th><th>Status</th></tr></thead>
+    <thead><tr><th>Employee</th><th>Dept</th><th>Entity</th><th>TS W1</th><th>TS W2</th><th>TS Total</th><th>Pay W1</th><th>Pay W2</th><th>Pay Total</th><th>Δ</th><th>Status</th></tr></thead>
     <tbody>${
       a.payComparisons
         .map(
           (
             r,
           ) => `<tr class="${r.mismatch ? "tr-mismatch" : r.isYS ? "tr-ys" : ""}">
-      <td class="emp-name">${r.name}</td>
-      <td><span class="badge b-dept">${r.dept}</span></td>
-      <td>${r.isYS ? '<span class="badge b-ys">🔵 YS LLC</span>' : '<span class="badge b-info">MSH</span>'}</td>
-      <td class="num">${r.tsW1 !== null ? fmtH(r.tsW1) : '<span style="color:var(--muted)">—</span>'}</td>
-      <td class="num">${r.tsW2 !== null ? fmtH(r.tsW2) : '<span style="color:var(--muted)">—</span>'}</td>
+      <td class="emp-name">${r.name}</td><td><span class="badge b-dept">${r.dept}</span></td>
+      <td>${r.isYS ? '<span class="badge b-ys">🔵 YS</span>' : '<span class="badge b-info">MSH</span>'}</td>
+      <td class="num">${r.tsW1 !== null ? fmtH(r.tsW1) : "—"}</td><td class="num">${r.tsW2 !== null ? fmtH(r.tsW2) : "—"}</td>
       <td class="num"><strong>${r.tsTotal !== null ? fmtH(r.tsTotal) : '<span class="badge b-miss">Missing</span>'}</strong></td>
-      <td class="num">${r.payW1 !== null ? fmtH(r.payW1) : '<span style="color:var(--muted)">—</span>'}</td>
-      <td class="num">${r.payW2 !== null ? fmtH(r.payW2) : '<span style="color:var(--muted)">—</span>'}</td>
+      <td class="num">${r.payW1 !== null ? fmtH(r.payW1) : "—"}</td><td class="num">${r.payW2 !== null ? fmtH(r.payW2) : "—"}</td>
       <td class="num"><strong>${r.payTotal !== null ? fmtH(r.payTotal) : '<span class="badge b-miss">Missing</span>'}</strong></td>
       <td class="num ${diffCls(r.diff)}">${r.diff !== null ? (r.diff > 0 ? "+" : "") + r.diff.toFixed(2) : "—"}</td>
-      <td>${r.missingTS ? '<span class="badge b-warn">⚠ Not in TS</span>' : r.missingPay ? '<span class="badge b-warn">⚠ Not in Payroll</span>' : r.mismatch ? `<span class="badge b-err">✗ MISMATCH ${(r.diff > 0 ? "+" : "") + r.diff.toFixed(2)} hrs</span>` : '<span class="badge b-ok">✓ Match</span>'}</td>
+      <td>${r.missingTS ? '<span class="badge b-warn">⚠ Not in TS</span>' : r.missingPay ? '<span class="badge b-warn">⚠ Not in Payroll</span>' : r.mismatch ? `<span class="badge b-err">✗ ${(r.diff > 0 ? "+" : "") + r.diff.toFixed(2)} hrs</span>` : '<span class="badge b-ok">✓ Match</span>'}</td>
     </tr>`,
         )
         .join("") ||
-      '<tr><td colspan="11" style="text-align:center;color:var(--muted);padding:28px">No payroll data — upload Internal Payroll Summary</td></tr>'
+      '<tr><td colspan="11" style="text-align:center;color:var(--muted);padding:28px">No payroll data uploaded</td></tr>'
     }</tbody>`;
 
-  // Tab 3: Payroll vs ADP
   document.getElementById("adpTable").innerHTML = `
-    <thead><tr><th>Employee</th><th>Dept</th><th>ADP File #</th><th>Entity</th><th>Pay Reg</th><th>Pay OT</th><th>ADP Reg</th><th>ADP OT</th><th>Reg Δ</th><th>OT Δ</th><th>Status</th></tr></thead>
+    <thead><tr><th>Employee</th><th>Dept</th><th>File #</th><th>Entity</th><th>Pay Reg</th><th>Pay OT</th><th>ADP Reg</th><th>ADP OT</th><th>Reg Δ</th><th>OT Δ</th><th>Status</th></tr></thead>
     <tbody>${
       a.adpComparisons
         .map(
           (
             r,
           ) => `<tr class="${r.mismatch ? "tr-mismatch" : r.isYS ? "tr-ys" : ""}">
-      <td class="emp-name">${r.name}</td>
-      <td><span class="badge b-dept">${r.dept || "?"}</span></td>
+      <td class="emp-name">${r.name}</td><td><span class="badge b-dept">${r.dept || "?"}</span></td>
       <td><span class="badge b-info">${r.fileNum || "—"}</span></td>
-      <td>${r.isYS ? '<span class="badge b-ys">🔵 YS LLC</span>' : '<span class="badge b-info">MSH</span>'}</td>
-      <td class="num">${fmtH(r.payReg)}</td>
-      <td class="num">${fmtH(r.payOT)}</td>
+      <td>${r.isYS ? '<span class="badge b-ys">🔵 YS</span>' : '<span class="badge b-info">MSH</span>'}</td>
+      <td class="num">${fmtH(r.payReg)}</td><td class="num">${fmtH(r.payOT)}</td>
       <td class="num">${r.adpReg !== null ? fmtH(r.adpReg) : '<span class="badge b-err">Not Found</span>'}</td>
       <td class="num">${r.adpOT !== null ? fmtH(r.adpOT) : "—"}</td>
       <td class="num ${diffCls(r.regDiff)}">${r.regDiff !== null ? (r.regDiff > 0 ? "+" : "") + r.regDiff.toFixed(2) : "—"}</td>
@@ -1140,11 +1076,10 @@ function renderResults() {
       '<tr><td colspan="11" style="text-align:center;color:var(--muted);padding:28px">No data — upload Payroll Summary and ADP Export</td></tr>'
     }</tbody>`;
 
-  // Tab 4: Log
   document.getElementById("logList").innerHTML = logs
     .map(
-      (e) => `
-    <li><span class="loglvl ${e.lvl}">${e.lvl}</span><span>${e.msg}</span></li>`,
+      (e) =>
+        `<li><span class="loglvl ${e.lvl}">${e.lvl}</span><span>${e.msg}</span></li>`,
     )
     .join("");
 }
@@ -1157,7 +1092,7 @@ function switchTab(idx) {
     .querySelectorAll(".tcontent")
     .forEach((t, i) => t.classList.toggle("active", i === idx));
   document
-    .querySelectorAll(".tab")
+    .querySelectorAll(".res-tab")
     .forEach((t, i) => t.classList.toggle("active", i === idx));
 }
 
@@ -1182,7 +1117,7 @@ function exportCSV() {
       "ADP OT",
       "Pay OT",
       "OT Diff",
-      "Overall Status",
+      "Status",
     ],
   ];
   const payMap = {};
@@ -1222,16 +1157,18 @@ function exportCSV() {
   const csv = rows.map((r) => r.map((v) => `"${v}"`).join(",")).join("\n");
   const a = document.createElement("a");
   a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
-  a.download = "payroll_audit_report_v3.csv";
+  a.download = "payroll_audit_v5.csv";
   a.click();
 }
 
 const actions = {
-  showMapping,
+  goToMapping,
   resetAll,
+  goToMapping,
+  showScreen,
   runAudit,
-  backToRoles,
-  resetAll,
+  showScreen,
+  showScreen,
   exportCSV,
   switchTab,
   switchTab,

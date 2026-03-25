@@ -7,178 +7,287 @@
     <link rel="stylesheet" href="./style.css" />
   </head>
   <body>
-    <header>
-      <div class="logo">✦</div>
-      <div>
-        <h1>Payroll Verification Tool <span class="hbadge">v3</span></h1>
-        <p>
-          MSH Hospitality · Biweekly Audit Engine · Dept-level Invoice +
-          Employee Mapping + Yellowstone LLC flagging
-        </p>
-      </div>
-    </header>
-
-    <div class="container">
-      <!-- Step indicator -->
-      <div class="steps" id="stepBar">
-        <div class="step active" id="stp1">① Upload &amp; Assign Roles</div>
-        <div class="step-sep">›</div>
-        <div class="step" id="stp2">② Map Employees &amp; Departments</div>
-        <div class="step-sep">›</div>
-        <div class="step" id="stp3">③ Audit Results</div>
-      </div>
-
-      <!-- Step 1: Upload -->
-      <div class="upload-zone" id="dropZone">
-        <input type="file" id="fileInput" multiple accept=".xlsx,.xls,.csv" />
-        <div class="upload-icon">📂</div>
-        <h2>Drop your payroll files here, or click to browse</h2>
-        <p>
-          Timesheets (Week 1 &amp; 2) · MSH Invoices · Yellowstone Invoices ·
-          Payroll Summary · ADP Export CSV
-        </p>
-      </div>
-
-      <div class="panel" id="rolePanel">
-        <h3>🗂 Step 1 — Assign File Roles</h3>
-        <p>
-          Roles are auto-detected from file names. Adjust any that are
-          incorrect, then proceed to employee mapping.
-        </p>
-        <div class="role-grid" id="roleGrid"></div>
-        <div class="btns">
-          <button
-            class="btn btn-primary"
-            id="toMappingBtn"
-            onclick="showMapping()"
-          >
-            ➡ Proceed to Employee Mapping
-          </button>
-          <button class="btn btn-sec" onclick="resetAll()">↺ Reset</button>
-        </div>
-      </div>
-
-      <!-- Step 2: Employee & Dept Mapping -->
-      <div class="panel" id="mappingPanel">
-        <h3>👥 Step 2 — Map Employee Names &amp; Departments</h3>
-        <p>
-          Each timesheet employee is listed below. Select the matching payroll
-          name (to handle spelling variations) and confirm the department.
-          Auto-matched where names are identical.
-        </p>
-        <div class="map-table" id="mapTable">
-          <div class="map-hdr">
-            <div>Timesheet Name</div>
-            <div>Matched Payroll Name</div>
-            <div>Department</div>
+    <div class="app">
+      <!-- ═══════════════════════════════ SIDEBAR ═══════════════════════════════ -->
+      <aside class="sidebar">
+        <div class="sb-logo">
+          <div class="sb-logo-mark">PVT</div>
+          <div>
+            <div class="sb-logo-text">Payroll Verif.</div>
+            <div class="sb-logo-sub">MSH Hospitality</div>
           </div>
-          <div id="mapRows"></div>
-        </div>
-        <div class="btns">
-          <button class="btn btn-sec" onclick="backToRoles()">⬅ Back</button>
-          <button class="btn btn-primary" id="auditBtn" onclick="runAudit()">
-            ▶ Run Payroll Audit
-          </button>
-        </div>
-      </div>
-
-      <!-- Step 3: Results -->
-      <div id="results">
-        <div class="topbtns">
-          <button class="btn btn-sec" onclick="resetAll()">
-            ↺ Upload New Files
-          </button>
-          <button class="btn btn-sec" onclick="backToMapping()">
-            ⬅ Edit Mapping
-          </button>
-          <button class="btn btn-sec" onclick="exportCSV()">
-            ⬇ Export Report CSV
-          </button>
         </div>
 
-        <div class="pbar" id="pbar"></div>
-        <div class="cards" id="cards"></div>
-        <div id="alertBanners"></div>
+        <div class="sb-section">Files Loaded</div>
 
-        <div class="tabs">
-          <div class="tab active" onclick="switchTab(0)">
-            👤 Employees <span class="tbadge" id="tb0">0</span>
+        <div class="sb-file-summary" id="sbFileSummary">
+          <div class="sb-slot" id="sb-week1">
+            <div class="sb-dot"></div>
+            <div class="sb-slot-label">Week 1 Timesheet</div>
+            <div class="sb-slot-count">0</div>
           </div>
-          <div class="tab" onclick="switchTab(1)">
-            🏢 Dept vs Invoice <span class="tbadge" id="tb1">—</span>
+          <div class="sb-slot" id="sb-week2">
+            <div class="sb-dot"></div>
+            <div class="sb-slot-label">Week 2 Timesheet</div>
+            <div class="sb-slot-count">0</div>
           </div>
-          <div class="tab" onclick="switchTab(2)">
-            📋 TS vs Payroll <span class="tbadge" id="tb2">—</span>
+          <div class="sb-slot" id="sb-invoice_msh">
+            <div class="sb-dot"></div>
+            <div class="sb-slot-label">MSH Invoice</div>
+            <div class="sb-slot-count">0</div>
           </div>
-          <div class="tab" onclick="switchTab(3)">
-            🏦 Payroll vs ADP <span class="tbadge" id="tb3">—</span>
+          <div class="sb-slot" id="sb-payroll">
+            <div class="sb-dot"></div>
+            <div class="sb-slot-label">Payroll Excel</div>
+            <div class="sb-slot-count">0</div>
           </div>
-          <div class="tab" onclick="switchTab(4)">📝 Parse Log</div>
+          <div class="sb-slot" id="sb-adp">
+            <div class="sb-dot"></div>
+            <div class="sb-slot-label">ADP CSV</div>
+            <div class="sb-slot-count">0</div>
+          </div>
+          <div class="sb-slot" id="sb-invoice_ys">
+            <div class="sb-dot"></div>
+            <div class="sb-slot-label">Yellowstone Inv.</div>
+            <div class="sb-slot-count">0</div>
+          </div>
         </div>
 
-        <div id="tc0" class="tcontent active">
-          <div class="sec-hdr">
-            <div>
-              <div class="sec-title">Combined Biweekly Hours per Employee</div>
-              <div class="sec-sub">
-                Week 1 + Week 2 timesheet totals · 🔵 = Yellowstone Activity LLC
-              </div>
+        <button class="sb-run" id="sbRunBtn" onclick="goToMapping()">
+          ▶ RUN VERIFICATION
+        </button>
+
+        <div class="sb-div"></div>
+        <div class="sb-section">Steps</div>
+
+        <div class="sb-step active" id="sbs1">
+          <div class="sb-step-num">1</div>
+          <div class="sb-step-label">Upload &amp; Assign</div>
+        </div>
+        <div class="sb-step" id="sbs2">
+          <div class="sb-step-num">2</div>
+          <div class="sb-step-label">Map Employees</div>
+        </div>
+        <div class="sb-step" id="sbs3">
+          <div class="sb-step-num">3</div>
+          <div class="sb-step-label">Audit Results</div>
+        </div>
+      </aside>
+
+      <!-- ══════════════════════════════ MAIN AREA ══════════════════════════════ -->
+      <div class="main">
+        <!-- Top bar -->
+        <div class="topbar">
+          <div>
+            <div class="topbar-title">Payroll Verification Tool</div>
+            <div class="topbar-sub">
+              MSH Hospitality · All processing runs in your browser · No data
+              leaves your machine
             </div>
           </div>
-          <div class="twrap"><table id="empTable"></table></div>
         </div>
 
-        <div id="tc1" class="tcontent">
-          <div class="sec-hdr">
-            <div>
-              <div class="sec-title">
-                Department / Duty Hours: Timesheets vs MSH Client Invoices
+        <!-- ── Screen 1: Upload ── -->
+        <div class="screen active" id="scr-upload">
+          <div class="upload-hero">
+            <div class="icon">📋</div>
+            <h1>Payroll Verification Tool</h1>
+            <p>
+              Drop all your payroll files at once, then assign each file to its
+              role below. Multiple files can share the same role (e.g. two Week
+              1 timesheets).
+            </p>
+          </div>
+
+          <div class="upload-zone-wrap">
+            <!-- Single multi-file drop zone -->
+            <div class="upload-zone" id="dropZone">
+              <input
+                type="file"
+                id="fileInput"
+                multiple
+                accept=".xlsx,.xls,.csv"
+              />
+              <div class="uz-icon">📂</div>
+              <div class="uz-title">
+                Drop all payroll files here, or click to browse
               </div>
-              <div class="sec-sub">
-                Biweekly dept totals vs billed invoice hours · Yellowstone
-                employees excluded
+              <div class="uz-sub">
+                Select multiple files at once — Timesheets, Invoices, Payroll
+                Summary, ADP Export
+              </div>
+              <div class="uz-types">
+                <span class="uz-tag">Week 1 TS</span>
+                <span class="uz-tag">Week 2 TS</span>
+                <span class="uz-tag">MSH Invoice</span>
+                <span class="uz-tag">Payroll Excel</span>
+                <span class="uz-tag">ADP CSV</span>
+                <span class="uz-tag">Yellowstone Inv.</span>
               </div>
             </div>
-          </div>
-          <div id="tc1-inner"></div>
-        </div>
 
-        <div id="tc2" class="tcontent">
-          <div class="sec-hdr">
-            <div>
-              <div class="sec-title">
-                Timesheet vs Internal Payroll Summary — 100% Match Required
+            <!-- Role assignment panel (shown after files are dropped) -->
+            <div class="role-panel" id="rolePanel" style="display: none">
+              <div class="role-panel-hdr">
+                <div>
+                  <h3>🗂 Assign File Roles</h3>
+                  <p>
+                    Roles are auto-detected from file names — adjust any that
+                    are incorrect.
+                  </p>
+                </div>
+                <button
+                  class="btn btn-sec"
+                  onclick="resetAll()"
+                  style="font-size: 11px; padding: 6px 12px"
+                >
+                  ↺ Reset
+                </button>
               </div>
-              <div class="sec-sub">
-                Per-employee biweekly hours must match exactly (Reg + OT)
+              <div class="role-panel-body" id="roleGrid"></div>
+              <div class="role-panel-footer">
+                <div class="rp-hint">
+                  💡 Multiple files can share the same role — e.g. two
+                  <strong>Week 1</strong> timesheets.
+                </div>
               </div>
             </div>
-          </div>
-          <div class="twrap"><table id="payTable"></table></div>
-        </div>
 
-        <div id="tc3" class="tcontent">
-          <div class="sec-hdr">
-            <div>
-              <div class="sec-title">
-                Payroll Summary vs ADP Export — 100% Match Required
-              </div>
-              <div class="sec-sub">
-                Matched by ADP File # · Reg Hours and OT Hours must match
-                exactly
-              </div>
+            <!-- Run button -->
+            <div class="run-row" id="runRow" style="display: none">
+              <button class="run-btn" id="mainRunBtn" onclick="goToMapping()">
+                ▶ Run Verification
+              </button>
             </div>
           </div>
-          <div class="twrap"><table id="adpTable"></table></div>
         </div>
 
-        <div id="tc4" class="tcontent">
-          <div class="sec-hdr">
-            <div><div class="sec-title">Parse &amp; Validation Log</div></div>
+        <!-- ── Screen 2: Mapping ── -->
+        <div class="screen" id="scr-mapping">
+          <div class="map-header">
+            <h2>👥 Map Employees &amp; Departments</h2>
+            <p>
+              Each timesheet employee is listed below. Select the matching
+              payroll name to handle spelling variations, then confirm the
+              department. Exact matches are auto-selected.
+            </p>
           </div>
-          <div class="twrap"><ul class="loglist" id="logList"></ul></div>
+          <div class="map-table">
+            <div class="map-hdr">
+              <div>Timesheet Name</div>
+              <div>Matched Payroll Name</div>
+              <div>Department</div>
+            </div>
+            <div id="mapRows"></div>
+          </div>
+          <div class="btns">
+            <button
+              class="btn btn-sec"
+              onclick="
+                showScreen('scr-upload');
+                setSideStep(1);
+              "
+            >
+              ⬅ Back
+            </button>
+            <button class="btn btn-primary" id="auditBtn" onclick="runAudit()">
+              ▶ Run Payroll Audit
+            </button>
+          </div>
         </div>
+
+        <!-- ── Screen 3: Results ── -->
+        <div class="screen" id="scr-results">
+          <div class="results-topbar">
+            <h2>Audit Results</h2>
+            <div style="display: flex; gap: 8px; flex-wrap: wrap">
+              <button
+                class="btn btn-sec"
+                onclick="
+                  showScreen('scr-upload');
+                  setSideStep(1);
+                "
+              >
+                ↺ New Files
+              </button>
+              <button
+                class="btn btn-sec"
+                onclick="
+                  showScreen('scr-mapping');
+                  setSideStep(2);
+                "
+              >
+                ⬅ Edit Mapping
+              </button>
+              <button class="btn btn-sec" onclick="exportCSV()">
+                ⬇ Export CSV
+              </button>
+            </div>
+          </div>
+
+          <div class="pbar" id="pbar"></div>
+          <div class="cards" id="cards"></div>
+          <div id="alertBanners"></div>
+
+          <div class="res-tabs">
+            <div class="res-tab active" onclick="switchTab(0)">
+              👤 Employees <span class="tbadge" id="tb0">0</span>
+            </div>
+            <div class="res-tab" onclick="switchTab(1)">
+              🏢 Dept vs Invoice <span class="tbadge" id="tb1">—</span>
+            </div>
+            <div class="res-tab" onclick="switchTab(2)">
+              📋 TS vs Payroll <span class="tbadge" id="tb2">—</span>
+            </div>
+            <div class="res-tab" onclick="switchTab(3)">
+              🏦 Payroll vs ADP <span class="tbadge" id="tb3">—</span>
+            </div>
+            <div class="res-tab" onclick="switchTab(4)">📝 Parse Log</div>
+          </div>
+
+          <div id="tc0" class="tcontent active">
+            <div class="sec-title">Combined Biweekly Hours per Employee</div>
+            <div class="sec-sub">
+              Week 1 + Week 2 totals · 🔵 = Yellowstone Activity LLC
+            </div>
+            <div class="twrap"><table id="empTable"></table></div>
+          </div>
+          <div id="tc1" class="tcontent">
+            <div class="sec-title">
+              Department / Duty Hours: Timesheets vs Client Invoices
+            </div>
+            <div class="sec-sub">
+              Biweekly dept totals vs billed invoice hours · Yellowstone
+              employees excluded
+            </div>
+            <div id="tc1-inner"></div>
+          </div>
+          <div id="tc2" class="tcontent">
+            <div class="sec-title">
+              Timesheet vs Internal Payroll Summary — 100% Match Required
+            </div>
+            <div class="sec-sub">
+              Per-employee biweekly hours must match exactly (Reg + OT)
+            </div>
+            <div class="twrap"><table id="payTable"></table></div>
+          </div>
+          <div id="tc3" class="tcontent">
+            <div class="sec-title">
+              Payroll Summary vs ADP Export — 100% Match Required
+            </div>
+            <div class="sec-sub">
+              Matched by ADP File # · Reg Hours and OT Hours must match exactly
+            </div>
+            <div class="twrap"><table id="adpTable"></table></div>
+          </div>
+          <div id="tc4" class="tcontent">
+            <div class="sec-title">Parse &amp; Validation Log</div>
+            <div class="twrap"><ul class="loglist" id="logList"></ul></div>
+          </div>
+        </div>
+        <!-- /scr-results -->
       </div>
+      <!-- /main -->
     </div>
 
     <script type="module" src="./main.js"></script>
