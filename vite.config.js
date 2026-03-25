@@ -7,15 +7,13 @@ export default defineConfig({
   plugins: [
     viteSingleFile(),
     ViteObfuscator({
-      // obfuscate JS
-      options: {
-        compact: true,
-        controlFlowFlattening: true,
-        deadCodeInjection: true,
-        stringArrayEncoding: ["rc4"],
-        disableConsoleOutput: true,
-        debugProtection: true,
-      },
+      compact: true,
+      stringArray: true,
+      stringArrayEncoding: ["rc4"],
+      controlFlowFlattening: false, // safer
+      disableConsoleOutput: true,
+      deadCodeInjection: true,
+      debugProtection: true,
     }),
   ],
   build: {
