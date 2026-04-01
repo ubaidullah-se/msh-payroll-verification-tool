@@ -1,7 +1,7 @@
 {
   "name": "msh-payroll-verification-tool",
   "version": "1.0.0",
-  "description": "",
+  "description": "A web-based tool for verifying payroll data across timesheets, invoices, and ADP exports for MSH Hospitality.",
   "main": "index.js",
   "scripts": {
     "dev": "vite",
@@ -12,8 +12,8 @@
     "type": "git",
     "url": "git+https://github.com/ubaidullah-se/msh-payroll-verification-tool.git"
   },
-  "keywords": [],
-  "author": "",
+  "keywords": ["payroll", "verification", "tool", "hospitality", "MSH", "ADP", "timesheet", "invoice", "audit", "xlsx", "vite"],
+  "author": "Ubaidullah",
   "license": "ISC",
   "type": "commonjs",
   "bugs": {
